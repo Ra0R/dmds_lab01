@@ -15,36 +15,36 @@ var (
 	ErrBadValue = errors.New(Package + "- bad value")
 )
 
-type keyValueStore interface {
-	// Maybe we need to pass a reference to the store aswell? //https://github.com/akrylysov/pogreb/blob/master/db.go
+type KeyValueStore interface {
 	Get(uint64) ([]byte, error)
-	Put(uint64, [10]byte) error
+	Put(uint64, [10]byte) error // Might return an error on inserting same key twice
 	Delete(uint64) error
 	ScanRange(uint64, uint64)
 
-	// Controll interface
-	// either on memory or storage
-	// Needs path and size
-	Create(string, int) (*keyValueStore, error)
+	// Control interface
+	// Path and Size
+	Create(string, int) (KeyValueStore, error)
 
 	// Opens KV store at given path
 	Open(string) error
-
-	Close(*keyValueStore) error
+	Close() error
 }
 
-// TODO
+type kvImpl struct {
+	MaxMem int
+	Path   string
+}
 
-func Get(key uint64) ([]byte, error) {
+func (k kvImpl) Get(key uint64) ([]byte, error) {
 	var retValue []byte
 	return retValue, errors.New(Package + "- not implemented")
 }
 
-const MaxMem = 1 << (10 * 3) // 1 GB
-const defPath = "."          // create in local directory
+func (k *kvImpl) Create(path string, size int) (*KeyValueStore, error) {
+	k.MaxMem = 1 << (10 * 3) // 1 GB
+	k.Path = "."             // create in local directory
 
-func Create(path string, size int) (*keyValueStore, error) {
-	if size > MaxMem || size == 0 {
+	if size > k.MaxMem || size == 0 {
 		return nil, errors.New("'size' is out of range")
 	}
 	if len(path) == 0 {
@@ -52,4 +52,8 @@ func Create(path string, size int) (*keyValueStore, error) {
 		return nil, errors.New("'path' is not valid")
 	}
 	return nil, nil
+}
+
+func (k *kvImpl) Close() error {
+	return errors.New(Package + " - not implemented")
 }

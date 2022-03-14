@@ -4,20 +4,42 @@ import (
 	"testing"
 )
 
-func TestPut(t *testing.T) {
+func TestCreate(t *testing.T) {
+	const mem = 1 << (10 * 2) // .1 GB
+	const defPath = "."       // create in local directory
 
+	var kvImpl kvImpl
+
+	_, err := kvImpl.Create(defPath, mem)
+
+	if err != nil {
+		t.Fatalf("Creation failed")
+	}
+}
+
+func TestCreate_SizeTooBig_Fail(t *testing.T) {
+	const mem = 1 << (10 * 4) // 10 GB > 1GB (MaxMem)
+
+	var kvImpl kvImpl
+
+	_, err := kvImpl.Create(".", mem)
+
+	if err == nil {
+		t.Fatalf("Creation of too big kvStore should have failed")
+	}
+}
+
+func TestPut(t *testing.T) {
 	t.Errorf("Test not implemented")
 }
 
-func TestGet() {
+func TestGet(t *testing.T) {
+	t.Errorf("Test not implemented")
 
 }
 
-func TestScan() {
-
+func TestScan(t *testing.T) {
+	t.Errorf("Test not implemented")
 }
 
-// Test for memory allocation/overflow
-
-// Some benchmark tests
-// https://github.com/recoilme/pogreb-bench
+//TODO? Tests for memory allocation/overflow
