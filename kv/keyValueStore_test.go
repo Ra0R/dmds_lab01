@@ -2,6 +2,8 @@ package kv
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCreate(t *testing.T) {
@@ -23,10 +25,7 @@ func TestCreate_SizeTooBig_Fail(t *testing.T) {
 	var kvImpl kvImpl
 
 	_, err := kvImpl.Create(".", mem)
-
-	if err == nil {
-		t.Fatalf("Creation of too big kvStore should have failed")
-	}
+	assert.EqualError(t, err, ErrOutOfRange.Error())
 }
 
 func TestPut(t *testing.T) {

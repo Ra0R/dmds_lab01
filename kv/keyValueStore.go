@@ -12,7 +12,8 @@ var (
 	ErrNotFound = errors.New(Package + "- key not found")
 
 	// ErrBadValue is returned when the value supplied to the Put method is invalid
-	ErrBadValue = errors.New(Package + "- bad value")
+	ErrBadValue   = errors.New(Package + "- bad value")
+	ErrOutOfRange = errors.New(Package + "- size' is out of range")
 )
 
 type KeyValueStore interface {
@@ -45,7 +46,7 @@ func (k *kvImpl) Create(path string, size int) (*KeyValueStore, error) {
 	k.Path = "."             // create in local directory
 
 	if size > k.MaxMem || size == 0 {
-		return nil, errors.New("'size' is out of range")
+		return nil, ErrOutOfRange
 	}
 	if len(path) == 0 {
 		fmt.Println(path)
