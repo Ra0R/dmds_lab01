@@ -12,8 +12,9 @@ var (
 	ErrNotFound = errors.New(Package + "- key not found")
 
 	// ErrBadValue is returned when the value supplied to the Put method is invalid
-	ErrBadValue   = errors.New(Package + "- bad value")
-	ErrOutOfRange = errors.New(Package + "- size' is out of range")
+	ErrBadValue    = errors.New(Package + "- bad value")
+	ErrOutOfRange  = errors.New(Package + "- size' is out of range")
+	ErrInvalidPath = errors.New(Package + "- 'path' is not valid")
 )
 
 type KeyValueStore interface {
@@ -27,7 +28,7 @@ type KeyValueStore interface {
 	Create(string, int) (KeyValueStore, error)
 
 	// Opens KV store at given path
-	Open(string) error
+	Open(string) (KeyValueStore, error)
 	Close() error
 }
 
@@ -41,7 +42,15 @@ func (k kvImpl) Get(key uint64) ([]byte, error) {
 	return retValue, errors.New(Package + "- not implemented")
 }
 
-func (k *kvImpl) Create(path string, size int) (*KeyValueStore, error) {
+func (k *kvImpl) Put(key uint64, value [10]byte) error {
+	return nil
+}
+
+func (k *kvImpl) Delete(key uint64) error {
+	return nil
+}
+
+func (k *kvImpl) Create(path string, size int) (*kvImpl, error) {
 	k.MaxMem = 1 << (10 * 3) // 1 GB
 	k.Path = "."             // create in local directory
 
@@ -50,8 +59,12 @@ func (k *kvImpl) Create(path string, size int) (*KeyValueStore, error) {
 	}
 	if len(path) == 0 {
 		fmt.Println(path)
-		return nil, errors.New("'path' is not valid")
+		return nil, ErrInvalidPath
 	}
+	return nil, nil
+}
+
+func Open(path string) (*kvImpl, error) {
 	return nil, nil
 }
 
