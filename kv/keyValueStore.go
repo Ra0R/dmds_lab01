@@ -39,7 +39,7 @@ type kvImpl struct {
 
 func (k kvImpl) Get(key uint64) ([]byte, error) {
 	var retValue []byte
-	return retValue, errors.New(Package + "- not implemented")
+	return retValue, nil
 }
 
 func (k *kvImpl) Put(key uint64, value [10]byte) error {
@@ -69,5 +69,5 @@ func Open(path string) (*kvImpl, error) {
 }
 
 func (k *kvImpl) Close() error {
-	return errors.New(Package + " - not implemented")
+	return nil
 }
