@@ -1,6 +1,6 @@
 # dmds_lab01
 
-## Buffer Pool
+## Buffer Pool (useful explanation)
 
 https://brunocalza.me/how-buffer-pool-works-an-implementation-in-go/
 
