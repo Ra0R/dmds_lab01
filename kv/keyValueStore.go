@@ -12,24 +12,25 @@ var (
 	ErrNotFound = errors.New(Package + "- key not found")
 
 	// ErrBadValue is returned when the value supplied to the Put method is invalid
-	ErrBadValue    = errors.New(Package + "- bad value")
-	ErrOutOfRange  = errors.New(Package + "- size' is out of range")
+	ErrBadValue = errors.New(Package + "- bad value")
+
+	// ErrorOutOfRange is returned when the supplied size is too large
+	ErrOutOfRange = errors.New(Package + "- size' is out of range")
+
+	// ErrInvalidPath is returned when the path that has been given is not valid (inexistent/not writable)
 	ErrInvalidPath = errors.New(Package + "- 'path' is not valid")
 )
 
 type KeyValueStore interface {
-	Get(uint64) ([]byte, error)
-	Put(uint64, [10]byte) error // Might return an error on inserting same key twice
-	Delete(uint64) error
+	Get(uint64) ([]byte, error) // Returns an error if the given key is not found
+	Put(uint64, [10]byte) error // Returns an error on inserting same key twice
+	Delete(uint64) error        // Returns an error on deleting same key twice
 	ScanRange(uint64, uint64)
 
 	// Control interface
-	// Path and Size
-	Create(string, int) (KeyValueStore, error)
-
-	// Opens KV store at given path
-	Open(string) (KeyValueStore, error)
-	Close() error
+	Create(string, int) (KeyValueStore, error) // Creates a KeyValueStore with a given path and size
+	Open(string) (KeyValueStore, error)        // Opens a KeyValueStore stored at the given path
+	Close() error                              // Closes the KeyValueStore
 }
 
 type kvImpl struct {

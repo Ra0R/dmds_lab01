@@ -11,10 +11,8 @@ var (
 )
 
 /***
-
 	Tests are named as follows:
 	Test{function}_{scenario}_{expectation}
-
 ***/
 
 func setupTestDB(path string, size int) (*kvImpl, error) {
