@@ -1,5 +1,7 @@
 # dmds_lab01
 
+Lab #1 of Renato Rao and Dominik Briner for the course Data Management & Data Structures of the University of Bern.
+
 ## Buffer Pool (useful explanation)
 
 https://brunocalza.me/how-buffer-pool-works-an-implementation-in-go/
