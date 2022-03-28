@@ -78,13 +78,14 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 
 	for iterator.ISLEAF == false {
 		parent = iterator
-
 		for i := 0; i < parent.num_keys; i++ {
+			// Travers pointer to the left of tree (key < fence pointer)
 			if key < iterator.keys[i] {
 				iterator = iterator.pointers[i]
 				break
 			}
 
+			// Travers pointer to the right of tree
 			if i == iterator.num_keys-1 {
 				iterator = iterator.pointers[i+1]
 				break
@@ -92,29 +93,34 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		}
 	}
 
+	// Current node has space
 	if iterator.num_keys < bpTree.branching_factor {
+		// Find insertion point
 		i := 0
 		for key > iterator.keys[i] && i < iterator.num_keys {
 			i++
 		}
 
+		// Move keys
 		for j := iterator.num_keys; j > i; j-- {
 			iterator.keys[j] = iterator.keys[j-1]
 		}
 
+		// Insert at found position
 		iterator.keys[i] = key
 		iterator.num_keys++
+		// Shift pointers
 		iterator.pointers[iterator.num_keys] = iterator.pointers[iterator.num_keys-1]
 		iterator.pointers[iterator.num_keys-1] = nil
-	} else {
+	} else // Current node has no space
+	{
 		var newLeaf Node
 		var copyKeys [BRANCHING_FACTOR + 2]uint64
 
-		for i := 0; i < BRANCHING_FACTOR; i++ {
-			copyKeys[i] = iterator.keys[i]
-		}
+		// Copy keys from current node
+		copy(copyKeys[:BRANCHING_FACTOR], iterator.keys[:BRANCHING_FACTOR])
 
-		// Get to insertion point
+		// Find insertion point
 		i := 0
 		for key > copyKeys[i] && i < BRANCHING_FACTOR {
 			i++
@@ -125,18 +131,19 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		}
 
 		copyKeys[i] = key
-		newLeaf.ISLEAF = true
 		L := (BRANCHING_FACTOR + 1) / 2
 		iterator.num_keys = L
-		newLeaf.num_keys = BRANCHING_FACTOR + 1 - L
 
+		// Create new leaf
+		newLeaf.ISLEAF = true
+		newLeaf.num_keys = BRANCHING_FACTOR + 1 - L
+		// Point current node to new leaf
 		iterator.pointers[iterator.num_keys] = &newLeaf
+
 		newLeaf.pointers[newLeaf.num_keys] = iterator.pointers[BRANCHING_FACTOR]
 		iterator.pointers[BRANCHING_FACTOR] = nil
 
-		for i := 0; i < iterator.num_keys; i++ {
-			iterator.keys[i] = copyKeys[i]
-		}
+		copy(iterator.keys[:iterator.num_keys], copyKeys[:iterator.num_keys])
 
 		k := iterator.num_keys
 		for i := 0; i < newLeaf.num_keys; i++ {
