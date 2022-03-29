@@ -2,7 +2,8 @@ package infrastructure
 
 type PageID int
 
-const pageSize = 4096 // 4kb page size, classic
+const pageSize = 100 // 4kb page size, classic
+var nextPageId = 1
 
 // Page represents a page on disk
 type Page struct {
@@ -10,6 +11,12 @@ type Page struct {
 	pinCounter int // number of times page has been pinned
 	isDirty    bool
 	data       [pageSize]byte
+	//writeLock  ignored for now
+	//isLeaf     bool part of data
+}
+
+func createNewPage() Page {
+	//	Make sure pageId is unique
 }
 
 func (p *Page) getId() PageID {

@@ -53,9 +53,15 @@ type Node struct {
 	num_keys int
 	ISLEAF   bool
 	keys     [BRANCHING_FACTOR + 1]uint64
-	pointers [BRANCHING_FACTOR + 1]*Node
 	values   [BRANCHING_FACTOR + 1][10]byte
-	next     *Node
+	children [BRANCHING_FACTOR + 1]inode
+	parent   inode
+	next     inode
+}
+
+type inode struct {
+	pageId  uint64
+	pointer *Node
 }
 
 func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
