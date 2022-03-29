@@ -14,6 +14,9 @@ var (
 	// ErrBadValue is returned when the value supplied to the Put method is invalid
 	ErrBadValue = errors.New(Package + " - bad value")
 
+	// ErrSameKeyTwice is returned when the same key is twice in the tree
+	ErrSameKeyTwice = errors.New(Package + " - same key twice")
+
 	// ErrorOutOfRange is returned when the supplied size is too large
 	ErrOutOfRange = errors.New(Package + " - size' is out of range")
 
@@ -51,13 +54,38 @@ type Node struct {
 	ISLEAF   bool
 	keys     [BRANCHING_FACTOR + 1]uint64
 	pointers [BRANCHING_FACTOR + 1]*Node
-	value    [10]byte
+	values   [BRANCHING_FACTOR + 1][10]byte
 	next     *Node
 }
 
-func (bpTree bpTreeImpl) Get(key uint64) ([]byte, error) {
-	var retValue []byte
-	return retValue, nil
+func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
+	var retValue [10]byte
+
+	if bpTree.root == (*Node)(nil) {
+		return retValue, ErrNotFound
+	}
+
+	iterator := bpTree.root
+
+	for !iterator.ISLEAF {
+		for i := 0; i < iterator.num_keys; i++ {
+			if key < iterator.keys[i] {
+				iterator = iterator.pointers[i]
+				break
+			}
+			if i == iterator.num_keys-1 {
+				iterator = iterator.pointers[i+1]
+			}
+		}
+	}
+
+	for i := 0; i < iterator.num_keys; i++ {
+		if iterator.keys[i] == key {
+			return iterator.values[i], nil
+		}
+	}
+
+	return retValue, ErrNotFound
 }
 
 func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
@@ -66,6 +94,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 	if bpTree.root == (*Node)(nil) {
 		var newNode Node
 		newNode.keys[0] = key
+		newNode.values[0] = value
 		newNode.ISLEAF = true
 		newNode.num_keys = 1
 		bpTree.root = &newNode
@@ -85,7 +114,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 				break
 			}
 
-			// Travers pointer to the right of tree
+			// Travers pointer to the right of tree (key > fence pointer)
 			if i == iterator.num_keys-1 {
 				iterator = iterator.pointers[i+1]
 				break
@@ -101,6 +130,10 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 			i++
 		}
 
+		if key == iterator.keys[i] {
+			return ErrSameKeyTwice
+		}
+
 		// Move keys
 		for j := iterator.num_keys; j > i; j-- {
 			iterator.keys[j] = iterator.keys[j-1]
@@ -109,6 +142,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		// Insert at found position
 		iterator.keys[i] = key
 		iterator.num_keys++
+
 		// Shift pointers
 		iterator.pointers[iterator.num_keys] = iterator.pointers[iterator.num_keys-1]
 		iterator.pointers[iterator.num_keys-1] = nil
@@ -126,6 +160,10 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 			i++
 		}
 
+		if key == iterator.keys[i] {
+			return ErrSameKeyTwice
+		}
+
 		for j := BRANCHING_FACTOR + 1; j > i; j-- {
 			copyKeys[j] = copyKeys[j-1]
 		}
@@ -136,6 +174,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 
 		// Create new leaf
 		newLeaf.ISLEAF = true
+		newLeaf.values[0] = value
 		newLeaf.num_keys = BRANCHING_FACTOR + 1 - L
 		// Point current node to new leaf
 		iterator.pointers[iterator.num_keys] = &newLeaf

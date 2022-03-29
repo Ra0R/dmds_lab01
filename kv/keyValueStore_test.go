@@ -170,9 +170,9 @@ func TestPut_SameKeyTwice_Fails(t *testing.T) {
 	// Different value same key
 	err := bpTreeImpl.Put(123, [10]byte{1, 0, 0, 0, 0, 1, 1, 1, 1, 1})
 
-	assert.Equal(t, nil, err, "Insert failed")
-
+	assert.EqualError(t, err, ErrSameKeyTwice.Error(), "Insert failed")
 	assert.Nil(t, bpTreeImpl.Close())
+	printBPTree(bpTreeImpl, t)
 }
 
 func TestGet(t *testing.T) {
@@ -195,7 +195,7 @@ func TestGet_DeletedKey_Error(t *testing.T) {
 	value, err := bpTreeImpl.Get(123)
 
 	assert.Equal(t, err, nil, "An error occured while getting key")
-	assert.Equal(t, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1}, value, "Key was not present")
+	assert.NotEqual(t, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1}, value, "Key was present")
 }
 
 func TestDelete(t *testing.T) {
@@ -246,11 +246,4 @@ func TestScan_TestRangeIncludesStartExcludesEndOfRange(t *testing.T) {
 	results := bpTreeImpl.ScanRange(123, 127)
 	assert.Equal(t, len(results), 1, "Should have exactly on value in range")
 	assert.Equal(t, results[0], val123, "Scan start should be included in result")
-}
-
-func TestPrintBPTree(t *testing.T) {
-	bpTreeImpl, _ := setupTestDB(".", mem)
-	defer closeTestDb(t, bpTreeImpl)
-
-	bpTreeImpl.Put(5, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
 }
