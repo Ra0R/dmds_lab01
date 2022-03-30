@@ -10,9 +10,8 @@ type Page struct {
 	id         PageID
 	pinCounter int // number of times page has been pinned
 	isDirty    bool
-	data       []byte //Maybe data should be a pointer?
-	//writeLock  ignored for now
-	//isLeaf     bool part of data
+	data       []byte
+	//writeLock  ignored for nows
 }
 
 func createNewPage() Page {
