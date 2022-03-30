@@ -3,8 +3,8 @@
   - load pages
   - flush pages => make sure node is deleted, pointers removed
 - create node from page (Renato)
-  - serialize data from/to page
-  - Create node from pageId via BufferPool whenever a node is needed
+  + serialize data from/to page - DONE
+  + Create node from pageId via BufferPool whenever a node is needed
 
 (Dominik)
 - lookup key / value in node

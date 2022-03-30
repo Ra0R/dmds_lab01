@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 var (
@@ -45,9 +46,9 @@ func printNode(cursor *Node, t *testing.T) {
 		fmt.Print("]")
 		fmt.Println()
 		// Print Values for Leaf Nodes
-		if !cursor.ISLEAF {
+		if !cursor.IsLeaf {
 			for i := 0; i < cursor.num_keys+1; i++ {
-				printNode(cursor.pointers[i], t)
+				// printNode(cursor.pointers[i], t)
 			}
 		}
 	}
@@ -246,4 +247,46 @@ func TestScan_TestRangeIncludesStartExcludesEndOfRange(t *testing.T) {
 	results := bpTreeImpl.ScanRange(123, 127)
 	assert.Equal(t, len(results), 1, "Should have exactly on value in range")
 	assert.Equal(t, results[0], val123, "Scan start should be included in result")
+}
+
+func Test_NodeToPage_PageToNode(t *testing.T) {
+	bpTreeImpl, _ := setupTestDB(".", mem)
+	var root Node
+
+	bpTreeImpl.root = &root
+	bpTreeImpl.root.PageId = 99
+	bpTreeImpl.root.IsLeaf = false
+	var inode Inode
+	inode.PageId = 1
+	bpTreeImpl.root.Children = [11]Inode{inode}
+
+	data := bpTreeImpl.root.SerializeNode()
+
+	fmt.Println(data)
+	fmt.Println(len(data))
+	var rootFromData Node
+	rootFromData = *InitializeNodeFromData(data)
+
+	assert.Equal(t, root.PageId, rootFromData.PageId)
+	assert.Equal(t, root.Children[0].PageId, rootFromData.Children[0].PageId)
+	assert.Equal(t, root.IsLeaf, rootFromData.IsLeaf)
+}
+
+func ExampleMarshal() {
+	type Item struct {
+		Foo string
+	}
+
+	b, err := msgpack.Marshal(&Item{Foo: "bar"})
+	if err != nil {
+		panic(err)
+	}
+
+	var item Item
+	err = msgpack.Unmarshal(b, &item)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(item.Foo)
+	// Output: bar
 }

@@ -1,8 +1,11 @@
 package kv
 
 import (
+	"bytes"
+	"encoding/gob"
 	"errors"
 	"fmt"
+	"main/infrastructure"
 )
 
 var (
@@ -26,8 +29,10 @@ var (
 
 const (
 	// Determines maximum amount of leaves per node
-	BRANCHING_FACTOR = 3
+	BRANCHING_FACTOR = infrastructure.PageSize / 10 // Available Size / Size of iNode =  (PageSize - (sizeof(PageId) + sizeof(value)) / (sizeof(key) + sizeof(value)
 )
+
+type Page = infrastructure.Page
 
 type KeyValueStore interface {
 	Get(uint64) ([]byte, error) // Returns an error if the given key is not found
@@ -43,44 +48,116 @@ type KeyValueStore interface {
 }
 
 type bpTreeImpl struct {
-	MaxMem           int
-	Path             string
-	root             *Node
-	branching_factor int
+	MaxMem     int
+	Path       string
+	root       *Node
+	rootPageId int
 }
 
 type Node struct {
+	page     *Page
+	PageId   int
 	num_keys int
-	ISLEAF   bool
+	IsLeaf   bool
 	keys     [BRANCHING_FACTOR + 1]uint64
 	values   [BRANCHING_FACTOR + 1][10]byte
-	children [BRANCHING_FACTOR + 1]inode
-	parent   inode
-	next     inode
+	Children [BRANCHING_FACTOR + 1]Inode
+	parent   Inode
+	next     Inode
 }
 
-type inode struct {
-	pageId  uint64
+type Inode struct {
+	PageId  int
 	pointer *Node
+}
+
+func (k *bpTreeImpl) Create(path string, size int) (*bpTreeImpl, error) {
+
+	k.MaxMem = 1 << (10 * 3) // 1 GB
+	k.Path = "."             // create in local directory
+
+	if size > k.MaxMem || size == 0 {
+		return nil, ErrOutOfRange
+	}
+	if len(path) == 0 {
+		fmt.Println(path)
+		return nil, ErrInvalidPath
+	}
+
+	// Initialize bufferPoolManager
+	bufferPoolManager = *infrastructure.NewBufferPoolManager(nil, nil)
+
+	// Create root node
+	var bpTree bpTreeImpl
+	rootPage := bufferPoolManager.NewPage()
+
+	// TODO Pin page
+
+	var root Node
+	root.page = rootPage
+	bpTree.root = &root
+	bpTree.rootPageId = int(rootPage.GetId())
+
+	return &bpTree, nil
+}
+
+var bufferPoolManager infrastructure.BufferPoolManager // Move to bpTree?
+
+func GetNodeFromPageId(pageId int) *Node {
+	page := bufferPoolManager.FetchPage(infrastructure.PageID(pageId))
+	return InitializeNodeFromData(page.Data[:])
+}
+
+func (node *Node) WriteNodeToPage(bufferPoolManager infrastructure.BufferPoolManager) *Page {
+	data := node.SerializeNode()
+	page := bufferPoolManager.FetchPage(infrastructure.PageID(node.PageId))
+
+	copy(page.Data[:], data)
+
+	return page
+}
+
+func InitializeNodeFromData(data []byte) *Node {
+	var node Node
+	if err := gob.NewDecoder(bytes.NewBuffer(data)).Decode(&node); err != nil {
+		panic(node)
+	}
+
+	return &node
+}
+
+func (node Node) SerializeNode() []byte {
+
+	buf := &bytes.Buffer{}
+	if err := gob.NewEncoder(buf).Encode(node); err != nil {
+		panic(err)
+	}
+
+	if buf.Len() > infrastructure.PageSize {
+		panic("Node too big for a single page")
+	}
+
+	return buf.Bytes()
 }
 
 func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
 	var retValue [10]byte
+	var root *Node = GetNodeFromPageId(bpTree.rootPageId)
 
-	if bpTree.root == (*Node)(nil) {
+	if root == nil {
 		return retValue, ErrNotFound
 	}
 
-	iterator := bpTree.root
+	iterator := root
 
-	for !iterator.ISLEAF {
+	for !iterator.IsLeaf {
 		for i := 0; i < iterator.num_keys; i++ {
 			if key < iterator.keys[i] {
-				iterator = iterator.pointers[i]
+				iterator = GetNodeFromPageId(iterator.Children[i].PageId)
 				break
 			}
 			if i == iterator.num_keys-1 {
-				iterator = iterator.pointers[i+1]
+				iterator = GetNodeFromPageId(iterator.Children[i+1].PageId)
 			}
 		}
 	}
@@ -101,7 +178,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		var newNode Node
 		newNode.keys[0] = key
 		newNode.values[0] = value
-		newNode.ISLEAF = true
+		newNode.IsLeaf = true
 		newNode.num_keys = 1
 		bpTree.root = &newNode
 
@@ -111,25 +188,25 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 	var iterator *Node = bpTree.root
 	var parent *Node
 
-	for iterator.ISLEAF == false {
+	for iterator.IsLeaf == false {
 		parent = iterator
 		for i := 0; i < parent.num_keys; i++ {
 			// Travers pointer to the left of tree (key < fence pointer)
 			if key < iterator.keys[i] {
-				iterator = iterator.pointers[i]
+				// iterator = iterator.pointers[i]
 				break
 			}
 
 			// Travers pointer to the right of tree (key > fence pointer)
 			if i == iterator.num_keys-1 {
-				iterator = iterator.pointers[i+1]
+				// iterator = iterator.pointers[i+1]
 				break
 			}
 		}
 	}
 
 	// Current node has space
-	if iterator.num_keys < bpTree.branching_factor {
+	if iterator.num_keys < BRANCHING_FACTOR {
 		// Find insertion point
 		i := 0
 		for key > iterator.keys[i] && i < iterator.num_keys {
@@ -150,9 +227,14 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		iterator.num_keys++
 
 		// Shift pointers
-		iterator.pointers[iterator.num_keys] = iterator.pointers[iterator.num_keys-1]
-		iterator.pointers[iterator.num_keys-1] = nil
-	} else // Current node has no space
+		// iterator.pointers[iterator.num_keys] = iterator.pointers[iterator.num_keys-1]
+		// iterator.pointers[iterator.num_keys-1] = nil
+	}
+	return nil
+}
+
+/*
+	 else // Current node has no space
 	{
 		var newLeaf Node
 		var copyKeys [BRANCHING_FACTOR + 2]uint64
@@ -211,7 +293,9 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 	}
 	return nil
 }
+*/
 
+/*
 func internalInsertion(key uint64, iterator *Node, child *Node, root *Node) error {
 
 	// Enough space to add a new key
@@ -295,7 +379,9 @@ func internalInsertion(key uint64, iterator *Node, child *Node, root *Node) erro
 
 	return nil
 }
+*/
 
+/*
 func findParent(iterator *Node, child *Node) *Node {
 	var parent *Node
 
@@ -316,6 +402,7 @@ func findParent(iterator *Node, child *Node) *Node {
 	}
 	return parent
 }
+*/
 
 func (k *bpTreeImpl) Delete(key uint64) error {
 	return nil
@@ -324,27 +411,6 @@ func (k *bpTreeImpl) Delete(key uint64) error {
 // ScanRange Returns all values with keys ranging [begin, end) (i.e. range with begin, but without end)
 func (k *bpTreeImpl) ScanRange(begin uint64, end uint64) [][10]byte {
 	return nil
-}
-
-func (k *bpTreeImpl) Create(path string, size int) (*bpTreeImpl, error) {
-
-	k.MaxMem = 1 << (10 * 3) // 1 GB
-	k.Path = "."             // create in local directory
-
-	if size > k.MaxMem || size == 0 {
-		return nil, ErrOutOfRange
-	}
-	if len(path) == 0 {
-		fmt.Println(path)
-		return nil, ErrInvalidPath
-	}
-
-	// Create root node
-	var bpTree bpTreeImpl
-	bpTree.branching_factor = BRANCHING_FACTOR
-	bpTree.root = nil
-
-	return &bpTree, nil
 }
 
 func Open(path string) (*bpTreeImpl, error) {

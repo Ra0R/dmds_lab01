@@ -7,10 +7,11 @@ import (
 const poolSize = 2
 
 type BufferPoolManager struct {
-	pages     [poolSize]*Page
-	replacer  *ClockReplacer
-	freeList  []FrameID
-	pageTable map[PageID]FrameID
+	pages       [poolSize]*Page
+	replacer    *ClockReplacer
+	freeList    []FrameID
+	pageTable   map[PageID]FrameID
+	diskManager DiskManager
 }
 
 // FetchPage fetches the requested page from the buffer pool.
@@ -113,7 +114,7 @@ func (b *BufferPoolManager) NewPage() *Page {
 	if pageID == nil {
 		return nil
 	}
-	page := &Page{*pageID, 1, false, [pageSize]byte{}}
+	page := &Page{*pageID, 1, false, [PageSize]byte{}}
 
 	b.pageTable[*pageID] = *frameID
 	b.pages[*frameID] = page
@@ -170,5 +171,5 @@ func NewBufferPoolManager(DiskManager DiskManager, clockReplacer *ClockReplacer)
 		freeList = append(freeList, FrameID(i))
 		pages[FrameID(i)] = nil
 	}
-	return &BufferPoolManager{DiskManager, pages, clockReplacer, freeList, make(map[PageID]FrameID)}
+	return &BufferPoolManager{pages, clockReplacer, freeList, make(map[PageID]FrameID), DiskManager}
 }

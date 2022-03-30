@@ -23,7 +23,7 @@ sibling pointers
 https://brunocalza.me/how-buffer-pool-works-an-implementation-in-go/
 
 
-## Other KV implementations in Go (for refernce)
+## Other KV implementations in Go (for reference)
 
 https://github.com/akrylysov/pogreb/blob/master/db.go
 
