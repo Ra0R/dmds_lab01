@@ -27,4 +27,4 @@ Non-leaf page:
 isleaf=0;pageId_of_parent;next_pageId;pageId_of_first_child;key;pageId_of_second_child;key;...;key;page_id_of_last_child;
 
 Leaf page:
-isleaf=1;pageId_of_parent;next;key_1;value_1;key_2;value_2;...key_n;value_n;
+isleaf=1;pageId_of_parent;next_pageId;key_1;value_1;key_2;value_2;...key_n;value_n;

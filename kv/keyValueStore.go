@@ -20,15 +20,16 @@ var (
 	// ErrSameKeyTwice is returned when the same key is twice in the tree
 	ErrSameKeyTwice = errors.New(Package + " - same key twice")
 
-	// ErrorOutOfRange is returned when the supplied size is too large
+	// ErrOutOfRange is returned when the supplied size is too large
 	ErrOutOfRange = errors.New(Package + " - size' is out of range")
 
 	// ErrInvalidPath is returned when the path that has been given is not valid (inexistent/not writable)
 	ErrInvalidPath = errors.New(Package + " - 'path' is not valid")
 )
 
-// PageSize - Sizeof(bool) - 2x Sizeof(PageId)  / Sizeof(key,value)
-const BRANCHING_FACTOR = 10 // int(((float32(infrastructure.PageSize - 1 - 16)) * 0.8) / 18)
+// Optimal max branching factor with our page structrue would be:  PageSize - Sizeof(bool) - 2x Sizeof(PageId)  / Sizeof(key,value)
+// Note that Sizeof(PageId) describes the
+const MAX_BRANCHING_FACTOR = 10 // int(((float32(infrastructure.PageSize - 1 - 16)) * 0.8) / 18)
 
 type Page = infrastructure.Page
 
@@ -58,9 +59,9 @@ type Node struct {
 	PageId   int
 	numKeys  int
 	IsLeaf   bool
-	Keys     [BRANCHING_FACTOR]uint64
-	Values   [BRANCHING_FACTOR + 1][10]byte
-	Children [BRANCHING_FACTOR + 1]Inode
+	Keys     [MAX_BRANCHING_FACTOR]uint64
+	Values   [MAX_BRANCHING_FACTOR + 1][10]byte
+	Children [MAX_BRANCHING_FACTOR + 1]Inode
 	Parent   Inode
 	Next     Inode
 }
@@ -214,7 +215,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 	}
 
 	// Current node has space
-	if iteratorNode.numKeys < BRANCHING_FACTOR {
+	if iteratorNode.numKeys < MAX_BRANCHING_FACTOR {
 
 		// Find insertion point
 		i := 0
@@ -249,14 +250,14 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 	 else // Current node has no space
 	{
 		var newLeaf Node
-		var copyKeys [BRANCHING_FACTOR + 2]uint64
+		var copyKeys [MAX_BRANCHING_FACTOR + 2]uint64
 
 		// Copy keys from current node
-		copy(copyKeys[:BRANCHING_FACTOR], iterator.keys[:BRANCHING_FACTOR])
+		copy(copyKeys[:MAX_BRANCHING_FACTOR], iterator.keys[:MAX_BRANCHING_FACTOR])
 
 		// Find insertion point
 		i := 0
-		for key > copyKeys[i] && i < BRANCHING_FACTOR {
+		for key > copyKeys[i] && i < MAX_BRANCHING_FACTOR {
 			i++
 		}
 
@@ -264,23 +265,23 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 			return ErrSameKeyTwice
 		}
 
-		for j := BRANCHING_FACTOR + 1; j > i; j-- {
+		for j := MAX_BRANCHING_FACTOR + 1; j > i; j-- {
 			copyKeys[j] = copyKeys[j-1]
 		}
 
 		copyKeys[i] = key
-		L := (BRANCHING_FACTOR + 1) / 2
+		L := (MAX_BRANCHING_FACTOR + 1) / 2
 		iterator.num_keys = L
 
 		// Create new leaf
 		newLeaf.ISLEAF = true
 		newLeaf.values[0] = value
-		newLeaf.num_keys = BRANCHING_FACTOR + 1 - L
+		newLeaf.num_keys = MAX_BRANCHING_FACTOR + 1 - L
 		// Point current node to new leaf
 		iterator.pointers[iterator.num_keys] = &newLeaf
 
-		newLeaf.pointers[newLeaf.num_keys] = iterator.pointers[BRANCHING_FACTOR]
-		iterator.pointers[BRANCHING_FACTOR] = nil
+		newLeaf.pointers[newLeaf.num_keys] = iterator.pointers[MAX_BRANCHING_FACTOR]
+		iterator.pointers[MAX_BRANCHING_FACTOR] = nil
 
 		copy(iterator.keys[:iterator.num_keys], copyKeys[:iterator.num_keys])
 
@@ -311,7 +312,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 func internalInsertion(key uint64, iterator *Node, child *Node, root *Node) error {
 
 	// Enough space to add a new key
-	if iterator.num_keys < BRANCHING_FACTOR {
+	if iterator.num_keys < MAX_BRANCHING_FACTOR {
 		i := 0
 		for key > iterator.keys[i] && i < iterator.num_keys {
 			i++
@@ -332,37 +333,37 @@ func internalInsertion(key uint64, iterator *Node, child *Node, root *Node) erro
 	} else { // Node is full, need to split
 		var newNode Node
 
-		var copyKeys [BRANCHING_FACTOR + 1]uint64
-		var copyPointers [BRANCHING_FACTOR + 2]*Node
+		var copyKeys [MAX_BRANCHING_FACTOR + 1]uint64
+		var copyPointers [MAX_BRANCHING_FACTOR + 2]*Node
 
 		// TODO Refactor
-		for i := 0; i < BRANCHING_FACTOR; i++ {
+		for i := 0; i < MAX_BRANCHING_FACTOR; i++ {
 			copyKeys[i] = iterator.keys[i]
 		}
 
-		for i := 0; i < BRANCHING_FACTOR+1; i++ {
+		for i := 0; i < MAX_BRANCHING_FACTOR+1; i++ {
 			copyPointers[i] = iterator.pointers[i]
 		}
 
 		i := 0
-		for key > copyKeys[i] && i < BRANCHING_FACTOR {
+		for key > copyKeys[i] && i < MAX_BRANCHING_FACTOR {
 			i++
 		}
 
-		for j := BRANCHING_FACTOR + 1; j > i; j-- {
+		for j := MAX_BRANCHING_FACTOR + 1; j > i; j-- {
 			copyKeys[j] = copyKeys[j-1]
 		}
 		copyKeys[i] = key
-		for j := BRANCHING_FACTOR + 2; j > i; j-- {
+		for j := MAX_BRANCHING_FACTOR + 2; j > i; j-- {
 			copyPointers[j] = copyPointers[j-1]
 		}
 
 		copyPointers[i+1] = child
 		newNode.ISLEAF = false
-		var L = (BRANCHING_FACTOR + 1) / 2
+		var L = (MAX_BRANCHING_FACTOR + 1) / 2
 		iterator.num_keys = L
 
-		newNode.num_keys = BRANCHING_FACTOR - L
+		newNode.num_keys = MAX_BRANCHING_FACTOR - L
 
 		var k = iterator.num_keys + 1
 		for i := 0; i < newNode.num_keys; i++ {

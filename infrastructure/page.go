@@ -2,9 +2,7 @@ package infrastructure
 
 type PageID int
 
-const PageSize int = 1000
-
-var nextPageId = 1
+const PageSize int = 1000 // Relatively small size, facilitates testing. For production, os.Getpagesize() would be optimal.
 
 // Page represents a page on disk
 type Page struct {
@@ -12,14 +10,7 @@ type Page struct {
 	pinCounter int // number of times page has been pinned
 	isDirty    bool
 	data       []byte
-	//writeLock  ignored for now
-}
-
-func createNewPage() Page {
-	//	Make sure pageId is unique
-	var page Page
-
-	return page
+	// writeLock  concurrency ignored for now
 }
 
 func (p *Page) SetData(data *[]byte) {

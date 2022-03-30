@@ -7,7 +7,7 @@ import (
 
 type node struct {
 	key   interface{}
-	value interface{}
+	value interface{} // In our case a bool. True = unpinned, can be victimized
 	next  *node
 	prev  *node
 }
@@ -19,14 +19,15 @@ type circularList struct {
 	capacity int
 }
 
+// find simply finds the node by its key
 func (c *circularList) find(key interface{}) *node {
-	ptr := c.head
+	pointer := c.head
 	for i := 0; i < c.size; i++ {
-		if ptr.key == key {
-			return ptr
+		if pointer.key == key {
+			return pointer
 		}
 
-		ptr = ptr.next
+		pointer = pointer.next
 	}
 
 	return nil
@@ -115,6 +116,7 @@ func (c *circularList) print() {
 	}
 }
 
+// newCircularList new empty circular list of capacity maxSize
 func newCircularList(maxSize int) *circularList {
 	return &circularList{nil, nil, 0, maxSize}
 }

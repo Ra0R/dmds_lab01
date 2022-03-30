@@ -4,63 +4,60 @@ import (
 	"errors"
 )
 
-const PoolSize = 2
+const PoolSize = 4 // Tiny size to facilitate testing
 
 type BufferPoolManager struct {
-	pages       [PoolSize]*Page
+	pages       [PoolSize]*Page // Pointers to every page – or nil if no page
 	replacer    *ClockReplacer
-	freeList    []FrameID
-	pageTable   map[PageID]FrameID
+	freeList    []FrameID          // List of all free frames
+	pageTable   map[PageID]FrameID // Maps which page occupies which frame
 	diskManager DiskManager
 }
 
-// FetchPage fetches the requested page from the buffer pool.
-func (b *BufferPoolManager) FetchPage(pageID PageID) *Page {
-	// if it is on buffer pool return it
-	if frameID, ok := b.pageTable[pageID]; ok {
-		page := b.pages[frameID]
-		page.pinCounter++
-		(*b.replacer).Pin(frameID)
+func (bufferPool *BufferPoolManager) FetchPage(pageID PageID) *Page {
+	if frameID, ok := bufferPool.pageTable[pageID]; ok {
+		page := bufferPool.pages[frameID]
+		page.IncPinCount()
+		(*bufferPool.replacer).Pin(frameID)
 		return page
 	}
 
 	// get the id from free list or from replacer
-	frameID, isFromFreeList := b.getFrameID()
+	frameID, isFromFreeList := bufferPool.getFrameID()
 	if frameID == nil {
 		return nil
 	}
 
 	if !isFromFreeList {
 		// remove page from current frame
-		currentPage := b.pages[*frameID]
+		currentPage := bufferPool.pages[*frameID]
 		if currentPage != nil {
 			if currentPage.isDirty {
-				b.diskManager.WritePage(currentPage)
+				bufferPool.diskManager.WritePage(currentPage)
 			}
 
-			delete(b.pageTable, currentPage.id)
+			delete(bufferPool.pageTable, currentPage.id)
 		}
 	}
 
-	page, err := b.diskManager.ReadPage(pageID)
+	page, err := bufferPool.diskManager.ReadPage(pageID)
 	if err != nil {
 		return nil
 	}
 	(*page).pinCounter = 1
-	b.pageTable[pageID] = *frameID
-	b.pages[*frameID] = page
+	bufferPool.pageTable[pageID] = *frameID
+	bufferPool.pages[*frameID] = page
 
 	return page
 }
 
-// UnpinPage unpins the target page from the buffer pool.
-func (b *BufferPoolManager) UnpinPage(pageID PageID, isDirty bool) error {
-	if frameID, ok := b.pageTable[pageID]; ok {
-		page := b.pages[frameID]
+func (bufferPool *BufferPoolManager) UnpinPage(pageID PageID, isDirty bool) error {
+	if frameID, ok := bufferPool.pageTable[pageID]; ok {
+		page := bufferPool.pages[frameID]
 		page.DecPinCount()
 
 		if page.pinCounter <= 0 {
-			(*b.replacer).Unpin(frameID)
+			(*bufferPool.replacer).Unpin(frameID)
 		}
 
 		if page.isDirty || isDirty {
@@ -76,12 +73,12 @@ func (b *BufferPoolManager) UnpinPage(pageID PageID, isDirty bool) error {
 }
 
 // FlushPage Flushes the target page to disk.
-func (b *BufferPoolManager) FlushPage(pageID PageID) bool {
-	if frameID, ok := b.pageTable[pageID]; ok {
-		page := b.pages[frameID]
+func (bufferPool *BufferPoolManager) FlushPage(pageID PageID) bool {
+	if frameID, ok := bufferPool.pageTable[pageID]; ok {
+		page := bufferPool.pages[frameID]
 		page.DecPinCount()
 
-		b.diskManager.WritePage(page)
+		bufferPool.diskManager.WritePage(page)
 		page.isDirty = false
 
 		return true
@@ -91,79 +88,78 @@ func (b *BufferPoolManager) FlushPage(pageID PageID) bool {
 }
 
 // NewPage allocates a new page in the buffer pool with the disk manager help
-func (b *BufferPoolManager) NewPage() *Page {
-	frameID, isFromFreeList := b.getFrameID()
+func (bufferPool *BufferPoolManager) NewPage() *Page {
+	frameID, isFromFreeList := bufferPool.getFrameID()
 	if frameID == nil {
 		return nil
 	}
 
 	if !isFromFreeList {
 		// remove page from current frame
-		currentPage := b.pages[*frameID]
+		currentPage := bufferPool.pages[*frameID]
 		if currentPage != nil {
 			if currentPage.isDirty {
-				b.diskManager.WritePage(currentPage)
+				bufferPool.diskManager.WritePage(currentPage)
 			}
 
-			delete(b.pageTable, currentPage.id)
+			delete(bufferPool.pageTable, currentPage.id)
 		}
 	}
 
 	// allocates new page
-	pageID := b.diskManager.AllocatePage()
+	pageID := bufferPool.diskManager.AllocatePage()
 	if pageID == nil {
 		return nil
 	}
 	page := &Page{*pageID, 1, false, []byte{}} //[PageSize]byte{}, do we need that?
 
-	b.pageTable[*pageID] = *frameID
-	b.pages[*frameID] = page
+	bufferPool.pageTable[*pageID] = *frameID
+	bufferPool.pages[*frameID] = page
 
 	return page
 }
 
 // DeletePage deletes a page from the buffer pool.
-func (b *BufferPoolManager) DeletePage(pageID PageID) error {
+func (bufferPool *BufferPoolManager) DeletePage(pageID PageID) error {
 	var frameID FrameID
 	var ok bool
-	if frameID, ok = b.pageTable[pageID]; !ok {
+	if frameID, ok = bufferPool.pageTable[pageID]; !ok {
 		return nil
 	}
 
-	page := b.pages[frameID]
+	page := bufferPool.pages[frameID]
 
 	if page.pinCounter > 0 {
-		return errors.New("Pin count greater than 0")
+		return errors.New("pin count greater than 0, cannot delete page")
 	}
-	delete(b.pageTable, page.id)
-	(*b.replacer).Pin(frameID)
-	b.diskManager.DeallocatePage(pageID)
+	delete(bufferPool.pageTable, page.id)
+	(*bufferPool.replacer).Pin(frameID)
+	bufferPool.diskManager.DeallocatePage(pageID)
 
-	b.freeList = append(b.freeList, frameID)
+	bufferPool.freeList = append(bufferPool.freeList, frameID)
 
 	return nil
-
 }
 
 // FlushAllpages flushes all the pages in the buffer pool to disk.
-func (b *BufferPoolManager) FlushAllpages() {
-	for pageID := range b.pageTable {
-		b.FlushPage(pageID)
+func (bufferPool *BufferPoolManager) FlushAllpages() {
+	for pageID := range bufferPool.pageTable {
+		bufferPool.FlushPage(pageID)
 	}
 }
 
-func (b *BufferPoolManager) getFrameID() (*FrameID, bool) {
-	if len(b.freeList) > 0 {
-		frameID, newFreeList := b.freeList[0], b.freeList[1:]
-		b.freeList = newFreeList
+func (bufferPool *BufferPoolManager) getFrameID() (*FrameID, bool) {
+	if len(bufferPool.freeList) > 0 {
+		frameID, newFreeList := bufferPool.freeList[0], bufferPool.freeList[1:]
+		bufferPool.freeList = newFreeList
 
 		return &frameID, true
 	}
 
-	return (*b.replacer).Victim(), false
+	return (*bufferPool.replacer).ChooseVictim(), false
 }
 
-//NewBufferPoolManager returns a empty buffer pool manager
+// NewBufferPoolManager Empty buffer pool manager
 func NewBufferPoolManager(DiskManager DiskManager, clockReplacer *ClockReplacer) *BufferPoolManager {
 	freeList := make([]FrameID, 0)
 	pages := [PoolSize]*Page{}
