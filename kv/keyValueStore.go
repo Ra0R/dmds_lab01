@@ -86,20 +86,19 @@ func (k *bpTreeImpl) Create(path string, size int) (*bpTreeImpl, error) {
 
 	// Initialize bufferPoolManager
 	diskManager := infrastructure.NewDiskManagerMock()
-	bufferPoolManager = *infrastructure.NewBufferPoolManager(diskManager, nil)
+	clockReplacer := infrastructure.NewClockReplacer(infrastructure.PoolSize)
+	bufferPoolManager = *infrastructure.NewBufferPoolManager(diskManager, clockReplacer)
 
 	// Create root node
 	var bpTree bpTreeImpl
-	//rootPage := bufferPoolManager.NewPage()
-	var rootPage Page //Remove
-	rootPage.SetId(5) // Remove
+	rootPage := bufferPoolManager.NewPage()
 
 	bufferPoolManager.FlushPage(rootPage.GetId())
 
 	// TODO Pin page
 
 	var root Node
-	root.page = &rootPage
+	root.page = rootPage
 	bpTree.root = &root
 	bpTree.rootPageId = int(rootPage.GetId())
 

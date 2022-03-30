@@ -4,10 +4,10 @@ import (
 	"errors"
 )
 
-const poolSize = 2
+const PoolSize = 2
 
 type BufferPoolManager struct {
-	pages       [poolSize]*Page
+	pages       [PoolSize]*Page
 	replacer    *ClockReplacer
 	freeList    []FrameID
 	pageTable   map[PageID]FrameID
@@ -166,8 +166,8 @@ func (b *BufferPoolManager) getFrameID() (*FrameID, bool) {
 //NewBufferPoolManager returns a empty buffer pool manager
 func NewBufferPoolManager(DiskManager DiskManager, clockReplacer *ClockReplacer) *BufferPoolManager {
 	freeList := make([]FrameID, 0)
-	pages := [poolSize]*Page{}
-	for i := 0; i < poolSize; i++ {
+	pages := [PoolSize]*Page{}
+	for i := 0; i < PoolSize; i++ {
 		freeList = append(freeList, FrameID(i))
 		pages[FrameID(i)] = nil
 	}
