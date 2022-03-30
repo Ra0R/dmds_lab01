@@ -2,7 +2,7 @@ package infrastructure
 
 type PageID int
 
-const PageSize = 100 // 4kb page size, classic
+const PageSize = 1000 // 4kb page size, classic
 var nextPageId = 1
 
 // Page represents a page on disk
@@ -20,6 +20,10 @@ func createNewPage() Page {
 	var page Page
 
 	return page
+}
+
+func (p *Page) SetId(pageId PageID) {
+	p.id = pageId
 }
 
 func (p *Page) GetId() PageID {

@@ -260,16 +260,63 @@ func Test_NodeToPage_PageToNode(t *testing.T) {
 	inode.PageId = 1
 	bpTreeImpl.root.Children = [11]Inode{inode}
 
-	data := bpTreeImpl.root.SerializeNode()
+	data := bpTreeImpl.root.serializeNode()
 
 	fmt.Println(data)
 	fmt.Println(len(data))
 	var rootFromData Node
-	rootFromData = *InitializeNodeFromData(data)
+	rootFromData = *initializeNodeFromData(data)
 
 	assert.Equal(t, root.PageId, rootFromData.PageId)
 	assert.Equal(t, root.Children[0].PageId, rootFromData.Children[0].PageId)
 	assert.Equal(t, root.IsLeaf, rootFromData.IsLeaf)
+}
+
+func Test_NodeToPageMultipleInodes_PageToNode(t *testing.T) {
+	bpTreeImpl, _ := setupTestDB(".", mem)
+	var root Node
+
+	bpTreeImpl.root = &root
+	bpTreeImpl.root.PageId = 99
+	bpTreeImpl.root.IsLeaf = false
+
+	inode := Inode{1, nil}
+	inode2 := Inode{2, nil}
+	inode3 := Inode{3, nil}
+
+	bpTreeImpl.root.Children = [11]Inode{inode, inode2, inode3}
+
+	data := bpTreeImpl.root.serializeNode()
+
+	fmt.Println(data)
+	fmt.Println(len(data))
+	var rootFromData Node
+	rootFromData = *initializeNodeFromData(data)
+
+	assert.Equal(t, root.PageId, rootFromData.PageId)
+	assert.Equal(t, root.Children[0].PageId, rootFromData.Children[0].PageId)
+	assert.Equal(t, root.IsLeaf, rootFromData.IsLeaf)
+}
+
+func Test_GetInodeSize(t *testing.T) {
+	bpTreeImpl, _ := setupTestDB(".", mem)
+	var root Node
+
+	bpTreeImpl.root = &root
+	bpTreeImpl.root.PageId = 99
+	bpTreeImpl.root.IsLeaf = false
+
+	inode := Inode{1, nil}
+	inode2 := Inode{2, nil}
+
+	bpTreeImpl.root.Children = [11]Inode{inode, inode2}
+	len2 := len(bpTreeImpl.root.serializeNode())
+
+	bpTreeImpl.root.Children[3] = Inode{3, nil}
+	len1 := len(bpTreeImpl.root.serializeNode())
+
+	inode_size := len1 - len2
+	t.Log("Inode_size:", inode_size)
 }
 
 func ExampleMarshal() {
