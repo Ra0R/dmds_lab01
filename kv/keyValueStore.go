@@ -185,7 +185,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		node.IsLeaf = true
 		node.num_keys = 1
 
-		// TODO Set Page Dirty?
+		bpTree.root.writeNodeToPage()
 
 		return nil
 	}
