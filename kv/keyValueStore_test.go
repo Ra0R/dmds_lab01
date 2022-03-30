@@ -1,6 +1,8 @@
 package kv
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"testing"
 
@@ -40,14 +42,14 @@ func printNode(cursor *Node, t *testing.T) {
 	if cursor != nil {
 		// Print keys
 		fmt.Print("[")
-		for i := 0; i < cursor.num_keys; i++ {
-			fmt.Print(cursor.keys[i], " | ")
+		for i := 0; i < cursor.numKeys; i++ {
+			fmt.Print(cursor.Keys[i], " | ")
 		}
 		fmt.Print("]")
 		fmt.Println()
 		// Print Values for Leaf Nodes
 		if !cursor.IsLeaf {
-			for i := 0; i < cursor.num_keys+1; i++ {
+			for i := 0; i < cursor.numKeys+1; i++ {
 				// printNode(cursor.pointers[i], t)
 			}
 		}
@@ -149,6 +151,21 @@ func TestPut_ComplexInsert(t *testing.T) {
 	assert.Nil(t, bpTreeImpl.Close())
 }
 
+func TestPut_Benchmark(t *testing.T) {
+	bpTreeImpl, _ := setupTestDB(".", mem)
+	// defer closeTestDb(t, bpTreeImpl)
+	var i uint64
+	i = 0
+	var err error
+
+	for ; i < 100; i++ {
+		err = bpTreeImpl.Put(i, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
+	}
+	printBPTree(bpTreeImpl, t)
+	assert.Equal(t, nil, err, "Insert failed")
+	assert.Nil(t, bpTreeImpl.Close())
+}
+
 func TestPut_Insert_SplitNode(t *testing.T) {
 	bpTreeImpl, _ := setupTestDB(".", mem)
 	// defer closeTestDb(t, bpTreeImpl)
@@ -178,7 +195,7 @@ func TestPut_SameKeyTwice_Fails(t *testing.T) {
 
 func TestGet(t *testing.T) {
 	bpTreeImpl, _ := setupTestDB(".", mem)
-	defer closeTestDb(t, bpTreeImpl)
+	//defer closeTestDb(t, bpTreeImpl)
 	bpTreeImpl.Put(123, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
 
 	value, err := bpTreeImpl.Get(123)
@@ -250,25 +267,24 @@ func TestScan_TestRangeIncludesStartExcludesEndOfRange(t *testing.T) {
 }
 
 func Test_NodeToPage_PageToNode(t *testing.T) {
-	bpTreeImpl, _ := setupTestDB(".", mem)
 	var root Node
 
-	bpTreeImpl.root = &root
-	bpTreeImpl.root.PageId = 99
-	bpTreeImpl.root.IsLeaf = false
+	root.IsLeaf = false
 	var inode Inode
-	inode.PageId = 1
-	bpTreeImpl.root.children = [11]Inode{inode}
+	inode.PageId = 5
+	root.Children = [11]Inode{inode}
 
-	data := bpTreeImpl.root.serializeNode()
+	data := root.serializeNode()
 
 	fmt.Println(data)
 	fmt.Println(len(data))
 	var rootFromData Node
 	rootFromData = *initializeNodeFromData(data)
+	fmt.Println(root.Children)
+	fmt.Println(rootFromData.Children)
 
 	assert.Equal(t, root.PageId, rootFromData.PageId)
-	assert.Equal(t, root.children[0].PageId, rootFromData.children[0].PageId)
+	assert.Equal(t, root.Children[0].PageId, rootFromData.Children[0].PageId)
 	assert.Equal(t, root.IsLeaf, rootFromData.IsLeaf)
 }
 
@@ -277,14 +293,13 @@ func Test_NodeToPageMultipleInodes_PageToNode(t *testing.T) {
 	var root Node
 
 	bpTreeImpl.root = &root
-	bpTreeImpl.root.PageId = 99
 	bpTreeImpl.root.IsLeaf = false
 
 	inode := Inode{1, nil}
 	inode2 := Inode{2, nil}
 	inode3 := Inode{3, nil}
 
-	bpTreeImpl.root.children = [11]Inode{inode, inode2, inode3}
+	bpTreeImpl.root.Children = [11]Inode{inode, inode2, inode3}
 
 	data := bpTreeImpl.root.serializeNode()
 
@@ -294,7 +309,7 @@ func Test_NodeToPageMultipleInodes_PageToNode(t *testing.T) {
 	rootFromData = *initializeNodeFromData(data)
 
 	assert.Equal(t, root.PageId, rootFromData.PageId)
-	assert.Equal(t, root.children[0].PageId, rootFromData.children[0].PageId)
+	assert.Equal(t, root.Children[0].PageId, rootFromData.Children[0].PageId)
 	assert.Equal(t, root.IsLeaf, rootFromData.IsLeaf)
 }
 
@@ -309,10 +324,10 @@ func Test_GetInodeSize(t *testing.T) {
 	inode := Inode{1, nil}
 	inode2 := Inode{2, nil}
 
-	bpTreeImpl.root.children = [11]Inode{inode, inode2}
+	bpTreeImpl.root.Children = [11]Inode{inode, inode2}
 	len2 := len(bpTreeImpl.root.serializeNode())
 
-	bpTreeImpl.root.children[3] = Inode{3, nil}
+	bpTreeImpl.root.Children[3] = Inode{3, nil}
 	len1 := len(bpTreeImpl.root.serializeNode())
 
 	inode_size := len1 - len2
@@ -336,4 +351,18 @@ func ExampleMarshal() {
 	}
 	fmt.Println(item.Foo)
 	// Output: bar
+}
+
+func TestEncode(t *testing.T) {
+	var key uint64 = 12344
+	var key2 uint64 = 1
+
+	buf := &bytes.Buffer{}
+
+	gob.NewEncoder(buf).Encode(key)
+	fmt.Println(buf.Len())
+
+	buf2 := &bytes.Buffer{}
+	gob.NewEncoder(buf2).Encode(key2)
+	fmt.Println(buf2.Len())
 }

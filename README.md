@@ -18,8 +18,9 @@ https://benjamincongdon.me/blog/2021/08/17/B-Trees-More-Than-I-Thought-Id-Want-t
 
 sibling pointers
 
-## Buffer Pool (useful explanation)
+## Buffer Pool Manager
 
+The structures in the "infrastructure" package are based on the reference implementation from here:
 https://brunocalza.me/how-buffer-pool-works-an-implementation-in-go/
 
 

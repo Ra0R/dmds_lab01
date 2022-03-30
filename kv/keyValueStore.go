@@ -27,10 +27,8 @@ var (
 	ErrInvalidPath = errors.New(Package + " - 'path' is not valid")
 )
 
-const (
-	// Determines maximum amount of leaves per node
-	BRANCHING_FACTOR = 10 //infrastructure.PageSize / 100 // Available Size / Size of iNode =  (PageSize - (sizeof(PageId) + sizeof(value)) / (sizeof(key) + sizeof(value)
-)
+// PageSize - Sizeof(bool) - 2x Sizeof(PageId)  / Sizeof(key,value)
+const BRANCHING_FACTOR = 10 // int(((float32(infrastructure.PageSize - 1 - 16)) * 0.8) / 18)
 
 type Page = infrastructure.Page
 
@@ -54,16 +52,17 @@ type bpTreeImpl struct {
 	rootPageId int
 }
 
+// Public fields in this struct will be serialized by gob serializer
 type Node struct {
 	page     *Page
 	PageId   int
-	num_keys int
+	numKeys  int
 	IsLeaf   bool
-	keys     [BRANCHING_FACTOR]uint64
-	values   [BRANCHING_FACTOR + 1][10]byte
-	children [BRANCHING_FACTOR + 1]Inode
-	parent   Inode
-	next     Inode
+	Keys     [BRANCHING_FACTOR]uint64
+	Values   [BRANCHING_FACTOR + 1][10]byte
+	Children [BRANCHING_FACTOR + 1]Inode
+	Parent   Inode
+	Next     Inode
 }
 
 type Inode struct {
@@ -93,14 +92,14 @@ func (k *bpTreeImpl) Create(path string, size int) (*bpTreeImpl, error) {
 	var bpTree bpTreeImpl
 	rootPage := bufferPoolManager.NewPage()
 
-	bufferPoolManager.FlushPage(rootPage.GetId())
-
-	// TODO Pin page
+	rootPage.IncPinCount()
 
 	var root Node
 	root.page = rootPage
 	bpTree.root = &root
 	bpTree.rootPageId = int(rootPage.GetId())
+
+	bufferPoolManager.FlushPage(rootPage.GetId())
 
 	return &bpTree, nil
 }
@@ -128,7 +127,7 @@ func initializeNodeFromData(data []byte) *Node {
 	return &node
 }
 
-func (node Node) serializeNode() []byte {
+func (node *Node) serializeNode() []byte {
 
 	buf := &bytes.Buffer{}
 	if err := gob.NewEncoder(buf).Encode(node); err != nil {
@@ -137,7 +136,7 @@ func (node Node) serializeNode() []byte {
 
 	if buf.Len() > infrastructure.PageSize {
 		fmt.Println(buf.Len())
-		panic("Node too big for a single page size:")
+		panic("Node too big for a single page size")
 	}
 
 	return buf.Bytes()
@@ -151,23 +150,25 @@ func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
 		return retValue, ErrNotFound
 	}
 
-	iterator := root
+	iteratorNode := root
 
-	for !iterator.IsLeaf {
-		for i := 0; i < iterator.num_keys; i++ {
-			if key < iterator.keys[i] {
-				iterator = getNodeFromPageId(iterator.children[i].PageId)
+	for !iteratorNode.IsLeaf {
+		for i := 0; i < iteratorNode.numKeys; i++ {
+			if key < iteratorNode.Keys[i] {
+				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
+				iteratorNode = getNodeFromPageId(iteratorNode.Children[i].PageId)
 				break
 			}
-			if i == iterator.num_keys-1 {
-				iterator = getNodeFromPageId(iterator.children[i+1].PageId)
+			if i == iteratorNode.numKeys-1 {
+				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
+				iteratorNode = getNodeFromPageId(iteratorNode.Children[i+1].PageId)
 			}
 		}
 	}
 
-	for i := 0; i < iterator.num_keys; i++ {
-		if iterator.keys[i] == key {
-			return iterator.values[i], nil
+	for i := 0; i < iteratorNode.numKeys; i++ {
+		if iteratorNode.Keys[i] == key {
+			return iteratorNode.Values[i], nil
 		}
 	}
 
@@ -178,12 +179,12 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 	// Root node should always be pinned
 
 	// Empty bpTree insert at root
-	if bpTree.root.num_keys == 0 {
+	if bpTree.root.numKeys == 0 {
 		node := bpTree.root
-		node.keys[0] = key
-		node.values[0] = value
+		node.Keys[0] = key
+		node.Values[0] = value
 		node.IsLeaf = true
-		node.num_keys = 1
+		node.numKeys = 1
 
 		bpTree.root.writeNodeToPage()
 
@@ -195,47 +196,51 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 
 	for iteratorNode.IsLeaf == false {
 		parent = iteratorNode
-		for i := 0; i < parent.num_keys; i++ {
+		for i := 0; i < parent.numKeys; i++ {
 			// Travers pointer to the left of tree (key < fence pointer)
-			if key < iteratorNode.keys[i] {
-				iteratorNode = getNodeFromPageId(iteratorNode.children[i].PageId)
+			if key < iteratorNode.Keys[i] {
+				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
+				iteratorNode = getNodeFromPageId(iteratorNode.Children[i].PageId)
 				break
 			}
 
 			// Travers pointer to the right of tree (key > fence pointer)
-			if i == iteratorNode.num_keys-1 {
-				iteratorNode = getNodeFromPageId(iteratorNode.children[i+1].PageId)
+			if i == iteratorNode.numKeys-1 {
+				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
+				iteratorNode = getNodeFromPageId(iteratorNode.Children[i+1].PageId)
 				break
 			}
 		}
 	}
 
 	// Current node has space
-	if iteratorNode.num_keys < BRANCHING_FACTOR {
+	if iteratorNode.numKeys < BRANCHING_FACTOR {
+
 		// Find insertion point
 		i := 0
-		for key > iteratorNode.keys[i] && i < iteratorNode.num_keys {
+		for key > iteratorNode.Keys[i] && i < iteratorNode.numKeys {
 			i++
 		}
 
-		if key == iteratorNode.keys[i] {
+		if key == iteratorNode.Keys[i] {
 			return ErrSameKeyTwice
 		}
 
 		// Move keys
-		for j := iteratorNode.num_keys; j > i; j-- {
-			iteratorNode.keys[j] = iteratorNode.keys[j-1]
+		for j := iteratorNode.numKeys; j > i; j-- {
+			iteratorNode.Keys[j] = iteratorNode.Keys[j-1]
 		}
 
 		// Insert at found position
-		iteratorNode.keys[i] = key
-		iteratorNode.num_keys++
+		iteratorNode.Keys[i] = key
+		iteratorNode.numKeys++
 
 		// Shift pointers
-		iteratorNode.children[iteratorNode.num_keys] = iteratorNode.children[iteratorNode.num_keys-1]
-		iteratorNode.children[iteratorNode.num_keys-1] = Inode{} // or nil
+		iteratorNode.Children[iteratorNode.numKeys] = iteratorNode.Children[iteratorNode.numKeys-1]
+		iteratorNode.Children[iteratorNode.numKeys-1] = Inode{} // or nil
 
 		iteratorNode.writeNodeToPage()
+		bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), true)
 	}
 	return nil
 }
