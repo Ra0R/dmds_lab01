@@ -59,7 +59,7 @@ type Node struct {
 	PageId   int
 	num_keys int
 	IsLeaf   bool
-	keys     [BRANCHING_FACTOR + 1]uint64
+	keys     [BRANCHING_FACTOR]uint64
 	values   [BRANCHING_FACTOR + 1][10]byte
 	children [BRANCHING_FACTOR + 1]Inode
 	parent   Inode
@@ -109,7 +109,7 @@ var bufferPoolManager infrastructure.BufferPoolManager // Move to bpTree?
 
 func getNodeFromPageId(pageId int) *Node {
 	page := bufferPoolManager.FetchPage(infrastructure.PageID(pageId))
-	return initializeNodeFromData(page.Data[:])
+	return initializeNodeFromData(*page.GetData())
 }
 
 func (node *Node) writeNodeToPage() {
