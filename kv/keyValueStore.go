@@ -61,7 +61,7 @@ type Node struct {
 	IsLeaf   bool
 	keys     [BRANCHING_FACTOR + 1]uint64
 	values   [BRANCHING_FACTOR + 1][10]byte
-	Children [BRANCHING_FACTOR + 1]Inode
+	children [BRANCHING_FACTOR + 1]Inode
 	parent   Inode
 	next     Inode
 }
@@ -85,7 +85,8 @@ func (k *bpTreeImpl) Create(path string, size int) (*bpTreeImpl, error) {
 	}
 
 	// Initialize bufferPoolManager
-	bufferPoolManager = *infrastructure.NewBufferPoolManager(nil, nil)
+	diskManager := infrastructure.NewDiskManagerMock()
+	bufferPoolManager = *infrastructure.NewBufferPoolManager(diskManager, nil)
 
 	// Create root node
 	var bpTree bpTreeImpl
@@ -112,13 +113,11 @@ func getNodeFromPageId(pageId int) *Node {
 	return initializeNodeFromData(page.Data[:])
 }
 
-func (node *Node) writeNodeToPage(bufferPoolManager infrastructure.BufferPoolManager) *Page {
+func (node *Node) writeNodeToPage() {
 	data := node.serializeNode()
 	page := bufferPoolManager.FetchPage(infrastructure.PageID(node.PageId))
 
-	copy(page.Data[:], data)
-
-	return page
+	page.SetData(&data)
 }
 
 func initializeNodeFromData(data []byte) *Node {
@@ -158,11 +157,11 @@ func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
 	for !iterator.IsLeaf {
 		for i := 0; i < iterator.num_keys; i++ {
 			if key < iterator.keys[i] {
-				iterator = getNodeFromPageId(iterator.Children[i].PageId)
+				iterator = getNodeFromPageId(iterator.children[i].PageId)
 				break
 			}
 			if i == iterator.num_keys-1 {
-				iterator = getNodeFromPageId(iterator.Children[i+1].PageId)
+				iterator = getNodeFromPageId(iterator.children[i+1].PageId)
 			}
 		}
 	}
@@ -200,13 +199,13 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		for i := 0; i < parent.num_keys; i++ {
 			// Travers pointer to the left of tree (key < fence pointer)
 			if key < iteratorNode.keys[i] {
-				iteratorNode = getNodeFromPageId(iteratorNode.Children[i].PageId)
+				iteratorNode = getNodeFromPageId(iteratorNode.children[i].PageId)
 				break
 			}
 
 			// Travers pointer to the right of tree (key > fence pointer)
 			if i == iteratorNode.num_keys-1 {
-				iteratorNode = getNodeFromPageId(iteratorNode.Children[i+1].PageId)
+				iteratorNode = getNodeFromPageId(iteratorNode.children[i+1].PageId)
 				break
 			}
 		}
@@ -234,9 +233,10 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		iteratorNode.num_keys++
 
 		// Shift pointers
-		iteratorNode.Children[iteratorNode.num_keys] = iteratorNode.Children[iteratorNode.num_keys-1]
-		iteratorNode.Children[iteratorNode.num_keys-1] = Inode{}
-		// iterator.pointers[iterator.num_keys-1] = nil
+		iteratorNode.children[iteratorNode.num_keys] = iteratorNode.children[iteratorNode.num_keys-1]
+		iteratorNode.children[iteratorNode.num_keys-1] = Inode{} // or nil
+
+		iteratorNode.writeNodeToPage()
 	}
 	return nil
 }

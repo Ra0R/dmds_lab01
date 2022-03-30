@@ -114,7 +114,7 @@ func (b *BufferPoolManager) NewPage() *Page {
 	if pageID == nil {
 		return nil
 	}
-	page := &Page{*pageID, 1, false, [PageSize]byte{}}
+	page := &Page{*pageID, 1, false, []byte{}} //[PageSize]byte{}, do we need that?
 
 	b.pageTable[*pageID] = *frameID
 	b.pages[*frameID] = page

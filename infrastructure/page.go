@@ -10,7 +10,7 @@ type Page struct {
 	id         PageID
 	pinCounter int // number of times page has been pinned
 	isDirty    bool
-	Data       [PageSize]byte
+	Data       []byte //Maybe data should be a pointer?
 	//writeLock  ignored for now
 	//isLeaf     bool part of data
 }
@@ -20,6 +20,11 @@ func createNewPage() Page {
 	var page Page
 
 	return page
+}
+
+func (p *Page) SetData(data *[]byte) {
+	p.isDirty = true
+	p.Data = *data
 }
 
 func (p *Page) SetId(pageId PageID) {
