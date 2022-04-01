@@ -40,5 +40,5 @@ func (d *DiskManagerMock) DeallocatePage(pageID PageID) {
 
 // NewDiskManagerMock returns an empty disk manager mock. Should only use one unless wanting to mock multiple disks.
 func NewDiskManagerMock() *DiskManagerMock {
-	return &DiskManagerMock{0, make(map[PageID]*Page)}
+	return &DiskManagerMock{1, make(map[PageID]*Page)}
 }
