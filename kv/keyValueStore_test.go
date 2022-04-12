@@ -1,9 +1,8 @@
 package kv
 
 import (
-	"bytes"
-	"encoding/gob"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -204,37 +203,6 @@ func TestGet(t *testing.T) {
 	assert.Equal(t, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1}, value, "Key was not present")
 }
 
-func TestGet_DeletedKey_Error(t *testing.T) {
-	bpTreeImpl, _ := setupTestDB(".", mem)
-	defer closeTestDb(t, bpTreeImpl)
-	bpTreeImpl.Put(123, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
-	bpTreeImpl.Delete(123)
-
-	value, err := bpTreeImpl.Get(123)
-
-	assert.Equal(t, err, nil, "An error occured while getting key")
-	assert.NotEqual(t, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1}, value, "Key was present")
-}
-
-func TestDelete(t *testing.T) {
-	bpTreeImpl, _ := setupTestDB(".", mem)
-	defer closeTestDb(t, bpTreeImpl)
-
-	err := bpTreeImpl.Delete(123)
-
-	assert.Equal(t, nil, err)
-}
-
-func TestDelete_DeleteTwice_Fail(t *testing.T) {
-	bpTreeImpl, _ := setupTestDB(".", mem)
-	defer closeTestDb(t, bpTreeImpl)
-	bpTreeImpl.Delete(123)
-
-	err := bpTreeImpl.Delete(123)
-
-	assert.NotEqual(t, nil, err, "Deleting twice should raise an error")
-}
-
 func TestScan(t *testing.T) {
 	bpTreeImpl, _ := setupTestDB(".", mem)
 	defer closeTestDb(t, bpTreeImpl)
@@ -270,9 +238,11 @@ func Test_NodeToPage_PageToNode(t *testing.T) {
 	var root Node
 
 	root.IsLeaf = false
-	var inode Inode
-	inode.PageId = 5
-	root.Children = [11]Inode{inode}
+	root.PageId = 5
+	root.ParentPageId = 10
+	root.NextPageId = 15
+	root.numKeys = 1
+	root.Children[0] = 5
 
 	data := root.serializeNode()
 
@@ -284,7 +254,11 @@ func Test_NodeToPage_PageToNode(t *testing.T) {
 	fmt.Println(rootFromData.Children)
 
 	assert.Equal(t, root.PageId, rootFromData.PageId)
-	assert.Equal(t, root.Children[0].PageId, rootFromData.Children[0].PageId)
+	assert.Equal(t, root.ParentPageId, rootFromData.ParentPageId)
+	assert.Equal(t, root.NextPageId, rootFromData.NextPageId)
+	assert.Equal(t, root.numKeys, rootFromData.numKeys)
+
+	assert.Equal(t, root.Children[0], rootFromData.Children[0])
 	assert.Equal(t, root.IsLeaf, rootFromData.IsLeaf)
 }
 
@@ -294,13 +268,10 @@ func Test_NodeToPageMultipleInodes_PageToNode(t *testing.T) {
 
 	bpTreeImpl.root = &root
 	bpTreeImpl.root.IsLeaf = false
-
-	inode := Inode{1, nil}
-	inode2 := Inode{2, nil}
-	inode3 := Inode{3, nil}
-
-	bpTreeImpl.root.Children = [11]Inode{inode, inode2, inode3}
-
+	bpTreeImpl.root.numKeys = 3
+	bpTreeImpl.root.Children[0] = 1
+	bpTreeImpl.root.Children[1] = 2
+	bpTreeImpl.root.Children[2] = 3
 	data := bpTreeImpl.root.serializeNode()
 
 	fmt.Println(data)
@@ -309,31 +280,41 @@ func Test_NodeToPageMultipleInodes_PageToNode(t *testing.T) {
 	rootFromData = *initializeNodeFromData(data)
 
 	assert.Equal(t, root.PageId, rootFromData.PageId)
-	assert.Equal(t, root.Children[0].PageId, rootFromData.Children[0].PageId)
+	assert.Equal(t, root.Children[0], rootFromData.Children[0])
+	assert.Equal(t, root.Children[1], rootFromData.Children[1])
+	assert.Equal(t, root.Children[2], rootFromData.Children[2])
 	assert.Equal(t, root.IsLeaf, rootFromData.IsLeaf)
 }
 
-func Test_GetInodeSize(t *testing.T) {
+func Test_NodeToPageMultipleKeyValue_PageToNode(t *testing.T) {
 	bpTreeImpl, _ := setupTestDB(".", mem)
 	var root Node
 
 	bpTreeImpl.root = &root
-	bpTreeImpl.root.PageId = 99
-	bpTreeImpl.root.IsLeaf = false
+	bpTreeImpl.root.IsLeaf = true
+	bpTreeImpl.root.numKeys = 1
+	val1 := [10]byte{0, 0, 0, 0, 1, 1, 1, 1, 1, 1}
+	val2 := [10]byte{1, 0, 0, 0, 1, 1, 1, 1, 1, 1}
 
-	inode := Inode{1, nil}
-	inode2 := Inode{2, nil}
+	bpTreeImpl.root.numKeys = 2
+	bpTreeImpl.root.Keys[0] = 9
+	bpTreeImpl.root.Values[0] = val1
+	bpTreeImpl.root.Keys[1] = 2
+	bpTreeImpl.root.Values[1] = val2
+	data := bpTreeImpl.root.serializeNode()
 
-	bpTreeImpl.root.Children = [11]Inode{inode, inode2}
-	len2 := len(bpTreeImpl.root.serializeNode())
+	fmt.Println(data)
+	fmt.Println(len(data))
+	var rootFromData Node
+	rootFromData = *initializeNodeFromData(data)
 
-	bpTreeImpl.root.Children[3] = Inode{3, nil}
-	len1 := len(bpTreeImpl.root.serializeNode())
-
-	inode_size := len1 - len2
-	t.Log("Inode_size:", inode_size)
+	assert.Equal(t, root.PageId, rootFromData.PageId)
+	assert.Equal(t, root.Keys[0], rootFromData.Keys[0])
+	assert.Equal(t, root.Values[0], rootFromData.Values[0])
+	assert.Equal(t, root.Keys[1], rootFromData.Keys[1])
+	assert.Equal(t, root.Values[1], rootFromData.Values[1])
+	assert.Equal(t, root.IsLeaf, rootFromData.IsLeaf)
 }
-
 func ExampleMarshal() {
 	type Item struct {
 		Foo string
@@ -353,16 +334,7 @@ func ExampleMarshal() {
 	// Output: bar
 }
 
-func TestEncode(t *testing.T) {
-	var key uint64 = 12344
-	var key2 uint64 = 1
+func TestPageSize(t *testing.T) {
 
-	buf := &bytes.Buffer{}
-
-	gob.NewEncoder(buf).Encode(key)
-	fmt.Println(buf.Len())
-
-	buf2 := &bytes.Buffer{}
-	gob.NewEncoder(buf2).Encode(key2)
-	fmt.Println(buf2.Len())
+	t.Log(os.Getpagesize())
 }

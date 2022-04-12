@@ -13,13 +13,13 @@ type Page struct {
 	// writeLock  concurrency ignored for now
 }
 
-func (p *Page) SetData(data *[]byte) {
+func (p *Page) SetData(data []byte) {
 	p.isDirty = true
-	p.data = *data
+	p.data = data
 }
 
-func (p *Page) GetData() *[]byte {
-	return &p.data
+func (p *Page) GetData() []byte {
+	return p.data
 }
 
 func (p *Page) SetId(pageId PageID) {

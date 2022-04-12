@@ -1,11 +1,10 @@
 package kv
 
 import (
-	"bytes"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"main/infrastructure"
+	"unsafe"
 )
 
 var (
@@ -52,23 +51,16 @@ type bpTreeImpl struct {
 	root       *Node
 	rootPageId int
 }
-
-// Public fields in this struct will be serialized by gob serializer
 type Node struct {
-	page     *Page
-	PageId   int
-	numKeys  int
-	IsLeaf   bool
-	Keys     [MAX_BRANCHING_FACTOR]uint64
-	Values   [MAX_BRANCHING_FACTOR + 1][10]byte
-	Children [MAX_BRANCHING_FACTOR + 1]Inode
-	Parent   Inode
-	Next     Inode
-}
-
-type Inode struct {
-	PageId  int
-	pointer *Node
+	IsLeaf       bool
+	PageId       int
+	ParentPageId int
+	NextPageId   int
+	numKeys      int
+	Keys         [MAX_BRANCHING_FACTOR]uint64
+	Values       [MAX_BRANCHING_FACTOR + 1][10]byte
+	Children     [MAX_BRANCHING_FACTOR + 1]int
+	page         *Page
 }
 
 func (k *bpTreeImpl) Create(path string, size int) (*bpTreeImpl, error) {
@@ -109,38 +101,110 @@ var bufferPoolManager infrastructure.BufferPoolManager // Move to bpTree?
 
 func getNodeFromPageId(pageId int) *Node {
 	page := bufferPoolManager.FetchPage(infrastructure.PageID(pageId))
-	return initializeNodeFromData(*page.GetData())
+	return initializeNodeFromData(page.GetData())
 }
 
 func (node *Node) writeNodeToPage() {
 	data := node.serializeNode()
 	page := bufferPoolManager.FetchPage(infrastructure.PageID(node.PageId))
 
-	page.SetData(&data)
+	if page != nil { // Unpersisted page
+		page.SetData(data)
+	} else {
+		bufferPoolManager.NewPage().SetData(data)
+	}
 }
 
 func initializeNodeFromData(data []byte) *Node {
 	var node Node
-	if err := gob.NewDecoder(bytes.NewBuffer(data)).Decode(&node); err != nil {
-		panic(node)
+	curIndex := 0
+	node.IsLeaf = *(*bool)(unsafe.Pointer(&data[0]))
+	curIndex += 1
+
+	var intInit int
+	intSize := (int)(unsafe.Sizeof(intInit))
+	node.PageId = *(*int)(unsafe.Pointer(&data[curIndex]))
+	curIndex += intSize
+
+	// PageId of parent
+	node.ParentPageId = *(*int)(unsafe.Pointer(&data[curIndex]))
+	curIndex += intSize
+
+	// PageId of next
+	node.NextPageId = *(*int)(unsafe.Pointer(&data[curIndex]))
+	curIndex += intSize
+
+	// Get numKeys
+	node.numKeys = *(*int)(unsafe.Pointer(&data[curIndex]))
+	curIndex += intSize
+
+	if node.IsLeaf == false {
+		// Parsing inner node
+		for i := 0; i < node.numKeys+1; i++ {
+			node.Children[i] = *(*int)(unsafe.Pointer(&data[curIndex]))
+			curIndex += (int)(unsafe.Sizeof(node.Children[i]))
+			node.Keys[i] = *(*uint64)(unsafe.Pointer(&data[curIndex]))
+			curIndex += (int)(unsafe.Sizeof(node.Keys[i]))
+		}
+
+	} else {
+		// Parsing leaf node
+		for i := 0; i < node.numKeys+1; i++ {
+			node.Keys[i] = *(*uint64)(unsafe.Pointer(&data[curIndex]))
+			curIndex += (int)(unsafe.Sizeof(node.Keys[i]))
+			node.Values[i] = *(*[10]byte)(unsafe.Pointer(&data[curIndex]))
+			curIndex += 10
+		}
 	}
 
 	return &node
 }
 
 func (node *Node) serializeNode() []byte {
+	var data [infrastructure.PageSize]byte
+	//isLeaf
+	currentIndex := 0
+	data[currentIndex] = *(*byte)(unsafe.Pointer(&node.IsLeaf))
+	currentIndex++
 
-	buf := &bytes.Buffer{}
-	if err := gob.NewEncoder(buf).Encode(node); err != nil {
-		panic(err)
+	// PageId
+	data[currentIndex] = *(*byte)(unsafe.Pointer(&node.PageId))
+	var len = (int)(unsafe.Sizeof(node.PageId))
+	currentIndex += len
+
+	// ParentPageId
+	data[currentIndex] = *(*byte)(unsafe.Pointer(&node.ParentPageId))
+	currentIndex += len
+
+	// NextPageId
+	data[currentIndex] = *(*byte)(unsafe.Pointer(&node.NextPageId))
+	currentIndex += len
+
+	// numKeys
+	data[currentIndex] = *(*byte)(unsafe.Pointer(&node.numKeys))
+	currentIndex += len
+
+	if node.IsLeaf {
+		for i := 0; i < node.numKeys; i++ {
+			data[currentIndex] = *(*byte)(unsafe.Pointer(&node.Keys[i]))
+			var len = (int)(unsafe.Sizeof(node.Keys[i]))
+			currentIndex += len
+			for j := 0; j < 10; j++ {
+				data[currentIndex] = *(*byte)(unsafe.Pointer(&node.Values[i][j]))
+				currentIndex++
+			}
+		}
+	} else {
+		for i := 0; i < node.numKeys; i++ {
+			data[currentIndex] = *(*byte)(unsafe.Pointer(&node.Children[i]))
+			var len = (int)(unsafe.Sizeof(node.Children[i]))
+			currentIndex += len
+			data[currentIndex] = *(*byte)(unsafe.Pointer(&node.Keys[i]))
+			currentIndex += len
+		}
 	}
 
-	if buf.Len() > infrastructure.PageSize {
-		fmt.Println(buf.Len())
-		panic("Node too big for a single page size")
-	}
-
-	return buf.Bytes()
+	return data[:]
 }
 
 func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
@@ -156,13 +220,14 @@ func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
 	for !iteratorNode.IsLeaf {
 		for i := 0; i < iteratorNode.numKeys; i++ {
 			if key < iteratorNode.Keys[i] {
-				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
-				iteratorNode = getNodeFromPageId(iteratorNode.Children[i].PageId)
+				// bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
+				iteratorNode = getNodeFromPageId(iteratorNode.Children[i])
+
 				break
 			}
 			if i == iteratorNode.numKeys-1 {
-				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
-				iteratorNode = getNodeFromPageId(iteratorNode.Children[i+1].PageId)
+				// bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
+				iteratorNode = getNodeFromPageId(iteratorNode.Children[i])
 			}
 		}
 	}
@@ -181,11 +246,12 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 
 	// Empty bpTree insert at root
 	if bpTree.root.numKeys == 0 {
-		node := bpTree.root
-		node.Keys[0] = key
-		node.Values[0] = value
-		node.IsLeaf = true
-		node.numKeys = 1
+		rootNode := bpTree.root
+		rootNode.PageId = bpTree.rootPageId
+		rootNode.Keys[0] = key
+		rootNode.Values[0] = value
+		rootNode.IsLeaf = true
+		rootNode.numKeys = 1
 
 		bpTree.root.writeNodeToPage()
 
@@ -201,14 +267,14 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 			// Travers pointer to the left of tree (key < fence pointer)
 			if key < iteratorNode.Keys[i] {
 				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
-				iteratorNode = getNodeFromPageId(iteratorNode.Children[i].PageId)
+				iteratorNode = getNodeFromPageId(iteratorNode.Children[i])
 				break
 			}
 
 			// Travers pointer to the right of tree (key > fence pointer)
 			if i == iteratorNode.numKeys-1 {
 				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
-				iteratorNode = getNodeFromPageId(iteratorNode.Children[i+1].PageId)
+				iteratorNode = getNodeFromPageId(iteratorNode.Children[i+1])
 				break
 			}
 		}
@@ -238,7 +304,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 
 		// Shift pointers
 		iteratorNode.Children[iteratorNode.numKeys] = iteratorNode.Children[iteratorNode.numKeys-1]
-		iteratorNode.Children[iteratorNode.numKeys-1] = Inode{} // or nil
+		iteratorNode.Children[iteratorNode.numKeys-1] = -1 //Inode{} // or nil
 
 		iteratorNode.writeNodeToPage()
 		bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), true)
@@ -416,10 +482,6 @@ func findParent(iterator *Node, child *Node) *Node {
 	return parent
 }
 */
-
-func (k *bpTreeImpl) Delete(key uint64) error {
-	return nil
-}
 
 // ScanRange Returns all values with keys ranging [begin, end) (i.e. range with begin, but without end)
 func (k *bpTreeImpl) ScanRange(begin uint64, end uint64) [][10]byte {
