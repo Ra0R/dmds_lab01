@@ -36,7 +36,7 @@ func (bufferPool *BufferPoolManager) FetchPage(pageID PageID) *Page {
 				bufferPool.diskManager.WritePage(currentPage)
 			}
 
-			delete(bufferPool.pageTable, currentPage.id)
+			delete(bufferPool.pageTable, currentPage.Id)
 		}
 	}
 
@@ -44,7 +44,7 @@ func (bufferPool *BufferPoolManager) FetchPage(pageID PageID) *Page {
 	if err != nil {
 		return nil
 	}
-	(*page).pinCounter = 1
+	(*page).PinCounter = 1
 	bufferPool.pageTable[pageID] = *frameID
 	bufferPool.pages[*frameID] = page
 
@@ -56,7 +56,7 @@ func (bufferPool *BufferPoolManager) UnpinPage(pageID PageID, isDirty bool) erro
 		page := bufferPool.pages[frameID]
 		page.DecPinCount()
 
-		if page.pinCounter <= 0 {
+		if page.PinCounter <= 0 {
 			(*bufferPool.replacer).Unpin(frameID)
 		}
 
@@ -88,7 +88,7 @@ func (bufferPool *BufferPoolManager) FlushPage(pageID PageID) bool {
 }
 
 // NewPage allocates a new page in the buffer pool with the disk manager help
-func (bufferPool *BufferPoolManager) NewPage() *Page {
+func (bufferPool *BufferPoolManager) NewPage(path string) *Page {
 	frameID, isFromFreeList := bufferPool.getFrameID()
 	if frameID == nil {
 		return nil
@@ -102,16 +102,16 @@ func (bufferPool *BufferPoolManager) NewPage() *Page {
 				bufferPool.diskManager.WritePage(currentPage)
 			}
 
-			delete(bufferPool.pageTable, currentPage.id)
+			delete(bufferPool.pageTable, currentPage.Id)
 		}
 	}
 
 	// allocates new page
-	pageID := bufferPool.diskManager.AllocatePage()
+	pageID := bufferPool.diskManager.AllocatePage(path)
 	if pageID == nil {
 		return nil
 	}
-	page := &Page{*pageID, 1, false, []byte{}} //[PageSize]byte{}, do we need that?
+	page := &Page{*pageID, 1, true, []byte{}, path} //[PageSize]byte{}, do we need that?
 
 	bufferPool.pageTable[*pageID] = *frameID
 	bufferPool.pages[*frameID] = page
@@ -129,10 +129,10 @@ func (bufferPool *BufferPoolManager) DeletePage(pageID PageID) error {
 
 	page := bufferPool.pages[frameID]
 
-	if page.pinCounter > 0 {
+	if page.PinCounter > 0 {
 		return errors.New("pin count greater than 0, cannot delete page")
 	}
-	delete(bufferPool.pageTable, page.id)
+	delete(bufferPool.pageTable, page.Id)
 	(*bufferPool.replacer).Pin(frameID)
 	bufferPool.diskManager.DeallocatePage(pageID)
 

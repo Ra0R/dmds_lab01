@@ -1,9 +1,10 @@
 package kv
 
 import (
+	"encoding/gob"
 	"errors"
-	"fmt"
 	"main/infrastructure"
+	"os"
 	"unsafe"
 )
 
@@ -36,7 +37,6 @@ type KeyValueStore interface {
 	Get(uint64) ([]byte, error) // Returns an error if the given key is not found
 	Put(uint64, [10]byte) error // Returns an error on inserting same key twice
 	Delete(uint64) error        // Returns an error on deleting same key twice
-	ScanRange(uint64, uint64)   // Inclusive beginning key, exclusive end key
 
 	// Control interface
 	Create(string, int) (KeyValueStore, error) // Creates a KeyValueStore with a given path and size
@@ -45,10 +45,10 @@ type KeyValueStore interface {
 	DeleteStore(string) error                  // Deletes the KeyValueStore. Error if no KeyValueStore at that path
 }
 
-type bpTreeImpl struct {
+type BpTreeImpl struct {
 	MaxMem     int
 	Path       string
-	rootPageId int
+	RootPageId int
 }
 type Node struct {
 	IsLeaf       bool
@@ -56,22 +56,28 @@ type Node struct {
 	ParentPageId int
 	NextPageId   int
 	numKeys      int
-	Keys         [MAX_BRANCHING_FACTOR + 1]uint64
+	Keys         [MAX_BRANCHING_FACTOR + 1]int
 	Values       [MAX_BRANCHING_FACTOR + 1][10]byte
 	Children     [MAX_BRANCHING_FACTOR + 1]int
 	page         *Page
 }
 
-func (k *bpTreeImpl) Create(path string, size int) (*bpTreeImpl, error) {
+func (k *BpTreeImpl) Create(Path string, size int) (*BpTreeImpl, error) {
 
-	k.MaxMem = 1 << (10 * 3) // 1 GB
-	k.Path = "."             // create in local directory
-
-	if size > k.MaxMem || size == 0 {
-		return nil, ErrOutOfRange
+	if size <= 0 {
+		k.MaxMem = 1 << (10 * 3) // 1 GB = Default value
+	} else {
+		k.MaxMem = size
 	}
-	if len(path) == 0 {
-		fmt.Println(path)
+
+	if len(Path) > 0 {
+		k.Path = Path
+	} else {
+		k.Path = "." // create in local directory
+	}
+
+	tree, _ := OpenKVStore(k.Path)
+	if tree != nil {
 		return nil, ErrInvalidPath
 	}
 
@@ -81,17 +87,20 @@ func (k *bpTreeImpl) Create(path string, size int) (*bpTreeImpl, error) {
 	bufferPoolManager = *infrastructure.NewBufferPoolManager(diskManager, clockReplacer)
 
 	// Create root node
-	var bpTree bpTreeImpl
-	rootPage := bufferPoolManager.NewPage()
+	var bpTree BpTreeImpl
+	rootPage := bufferPoolManager.NewPage(k.Path)
 
 	rootPage.IncPinCount()
 
 	var root Node
 	root.page = rootPage
 	root.IsLeaf = true
-	bpTree.rootPageId = int(rootPage.GetId())
+	bpTree.Path = Path
+	bpTree.RootPageId = int(rootPage.GetId())
 
 	bufferPoolManager.FlushPage(rootPage.GetId())
+
+	CreateKVStore(bpTree)
 
 	return &bpTree, nil
 }
@@ -110,7 +119,7 @@ func (node *Node) writeNodeToPage() {
 	if page != nil { // Unpersisted page
 		page.SetData(data)
 	} else {
-		bufferPoolManager.NewPage().SetData(data)
+		bufferPoolManager.NewPage(page.Path).SetData(data)
 	}
 }
 
@@ -146,14 +155,14 @@ func initializeNodeFromData(data []byte) *Node {
 		for i := 0; i < node.numKeys+1; i++ {
 			node.Children[i] = *(*int)(unsafe.Pointer(&data[curIndex]))
 			curIndex += (int)(unsafe.Sizeof(node.Children[i]))
-			node.Keys[i] = *(*uint64)(unsafe.Pointer(&data[curIndex]))
+			node.Keys[i] = *(*int)(unsafe.Pointer(&data[curIndex]))
 			curIndex += (int)(unsafe.Sizeof(node.Keys[i]))
 		}
 
 	} else {
 		// Parsing leaf node
 		for i := 0; i < node.numKeys+1; i++ {
-			node.Keys[i] = *(*uint64)(unsafe.Pointer(&data[curIndex]))
+			node.Keys[i] = *(*int)(unsafe.Pointer(&data[curIndex]))
 			curIndex += (int)(unsafe.Sizeof(node.Keys[i]))
 			node.Values[i] = *(*[10]byte)(unsafe.Pointer(&data[curIndex]))
 			curIndex += 10
@@ -210,9 +219,9 @@ func (node *Node) serializeNode() []byte {
 	return data[:]
 }
 
-func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
+func (bpTree BpTreeImpl) Get(key int) ([10]byte, error) {
 	var retValue [10]byte
-	var root *Node = getNodeFromPageId(bpTree.rootPageId)
+	var root *Node = getNodeFromPageId(bpTree.RootPageId)
 
 	if root == nil {
 		return retValue, ErrNotFound
@@ -241,13 +250,13 @@ func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
 	return retValue, ErrNotFound
 }
 
-func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
+func (bpTree *BpTreeImpl) Put(key int, value [10]byte) error {
 	// Root node should always be pinned
-	rootNode := getNodeFromPageId(bpTree.rootPageId)
+	rootNode := getNodeFromPageId(bpTree.RootPageId)
 
 	// Empty bpTree insert at root
 	if rootNode.numKeys == 0 {
-		rootNode.PageId = bpTree.rootPageId
+		rootNode.PageId = bpTree.RootPageId
 		rootNode.Keys[0] = key
 		rootNode.Values[0] = value
 		rootNode.IsLeaf = true
@@ -258,7 +267,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		return nil
 	}
 
-	var iteratorNode *Node = getNodeFromPageId(bpTree.rootPageId)
+	var iteratorNode *Node = getNodeFromPageId(bpTree.RootPageId)
 	parent := iteratorNode
 
 	for iteratorNode.IsLeaf == false {
@@ -309,9 +318,9 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		iteratorNode.writeNodeToPage()
 	} else // Current node has no space
 	{
-		var newLeaf = createNewNode()
+		var newLeaf = createNewNode(bpTree.Path)
 
-		var copyKeys [MAX_BRANCHING_FACTOR + 2]uint64
+		var copyKeys [MAX_BRANCHING_FACTOR + 2]int
 
 		// Copy keys from current node
 		copy(copyKeys[:MAX_BRANCHING_FACTOR], iteratorNode.Keys[:MAX_BRANCHING_FACTOR])
@@ -356,15 +365,15 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 		newLeaf.writeNodeToPage()
 		iteratorNode.writeNodeToPage()
 
-		if iteratorNode.PageId == bpTree.rootPageId {
-			var newRoot = createNewNode()
+		if iteratorNode.PageId == bpTree.RootPageId {
+			var newRoot = createNewNode(bpTree.Path)
 
 			newRoot.Keys[0] = newLeaf.Keys[0]
 			newRoot.Children[0] = iteratorNode.PageId
 			newRoot.Children[1] = newLeaf.PageId
 			newRoot.IsLeaf = false
 			newRoot.numKeys = 1
-			bpTree.rootPageId = newRoot.PageId
+			bpTree.RootPageId = newRoot.PageId
 
 			newRoot.writeNodeToPage()
 		} else {
@@ -374,15 +383,15 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 	return nil
 }
 
-func createNewNode() *Node {
+func createNewNode(path string) *Node {
 	var newNode Node
-	newNode.page = bufferPoolManager.NewPage()
+	newNode.page = bufferPoolManager.NewPage(path)
 	newNode.PageId = int(newNode.page.GetId())
 
 	return &newNode
 }
 
-func internalInsertion(key uint64, iteratorPageId int, childPageId int, bpTree *bpTreeImpl) error {
+func internalInsertion(key int, iteratorPageId int, childPageId int, bpTree *BpTreeImpl) error {
 
 	iterator := getNodeFromPageId(iteratorPageId)
 
@@ -407,9 +416,9 @@ func internalInsertion(key uint64, iteratorPageId int, childPageId int, bpTree *
 		iterator.writeNodeToPage()
 
 	} else { // Node is full, need to split
-		var newNode = createNewNode()
+		var newNode = createNewNode(bpTree.Path)
 
-		var copyKeys [MAX_BRANCHING_FACTOR + 1]uint64
+		var copyKeys [MAX_BRANCHING_FACTOR + 1]int
 		var copyChildren [MAX_BRANCHING_FACTOR + 2]int
 
 		for i := 0; i < MAX_BRANCHING_FACTOR; i++ {
@@ -456,19 +465,19 @@ func internalInsertion(key uint64, iteratorPageId int, childPageId int, bpTree *
 		newNode.writeNodeToPage()
 		iterator.writeNodeToPage()
 
-		if iterator.PageId == bpTree.rootPageId {
-			var newRoot = createNewNode()
+		if iterator.PageId == bpTree.RootPageId {
+			var newRoot = createNewNode(bpTree.Path)
 
 			newRoot.Keys[0] = iterator.Keys[iterator.numKeys]
 			newRoot.Children[0] = iterator.PageId
 			newRoot.Children[1] = newNode.PageId
 			newRoot.IsLeaf = false
 			newRoot.numKeys = 1
-			bpTree.rootPageId = newRoot.PageId
+			bpTree.RootPageId = newRoot.PageId
 
 			newRoot.writeNodeToPage()
 		} else {
-			internalInsertion(iterator.Keys[iterator.numKeys], findParent(bpTree.rootPageId, iterator.PageId).PageId, newNode.PageId, bpTree)
+			internalInsertion(iterator.Keys[iterator.numKeys], findParent(bpTree.RootPageId, iterator.PageId).PageId, newNode.PageId, bpTree)
 		}
 	}
 
@@ -498,19 +507,44 @@ func findParent(iteratorPageId int, childPageId int) *Node {
 	return parent
 }
 
-// ScanRange Returns all values with keys ranging [begin, end) (i.e. range with begin, but without end)
-func (k *bpTreeImpl) ScanRange(begin uint64, end uint64) [][10]byte {
+func (k *BpTreeImpl) Open(path string) (*BpTreeImpl, error) {
+	return OpenKVStore(path)
+}
+
+// What should this do?
+func (k *BpTreeImpl) Close() error {
 	return nil
 }
 
-func Open(path string) (*bpTreeImpl, error) {
-	return nil, nil
+func (k *BpTreeImpl) DeleteStore(path string) error {
+	return DeleteKVStore(path)
 }
 
-func (k *bpTreeImpl) Close() error {
-	return nil
+func CreateKVStore(btree BpTreeImpl) error {
+	file, err := os.Create(btree.Path + "/KVSTORE")
+	defer file.Close()
+	encoder := gob.NewEncoder(file)
+	err = encoder.Encode(btree)
+	return err
 }
 
-func (k *bpTreeImpl) DeleteStore(path string) error {
-	return nil
+func OpenKVStore(path string) (*BpTreeImpl, error) {
+	file, err := os.Open(path + "/KVSTORE")
+	defer file.Close()
+	if err != nil {
+		return nil, err
+	}
+	var btree BpTreeImpl
+	decoder := gob.NewDecoder(file)
+	err = decoder.Decode(&btree)
+	return &btree, err
+}
+
+func DeleteKVStore(path string) error {
+	err := os.RemoveAll(path + "/KVSTOREPAGES")
+	if err != nil {
+		return err
+	}
+	err = os.Remove(path + "/KVSTORE")
+	return err
 }

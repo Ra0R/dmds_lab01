@@ -7,6 +7,6 @@ const DiskMaxNumPages = 1000 // Needlessly large for our case, because we assume
 type DiskManager interface {
 	ReadPage(PageID) (*Page, error)
 	WritePage(*Page) error
-	AllocatePage() *PageID
+	AllocatePage(string) *PageID
 	DeallocatePage(PageID)
 }

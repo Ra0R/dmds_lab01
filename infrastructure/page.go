@@ -6,40 +6,41 @@ const PageSize int = 1000 // Relatively small size, facilitates testing. For pro
 
 // Page represents a page on disk
 type Page struct {
-	id         PageID
-	pinCounter int // number of times page has been pinned
+	Id         PageID
+	PinCounter int // number of times page has been pinned
 	isDirty    bool
-	data       []byte
-	// writeLock  concurrency ignored for now
+	Data       []byte
+	Path       string
+	// writeLock  concurrency ignored
 }
 
 func (p *Page) SetData(data []byte) {
 	p.isDirty = true
-	p.data = data
+	p.Data = data
 }
 
 func (p *Page) GetData() []byte {
-	return p.data
+	return p.Data
 }
 
 func (p *Page) SetId(pageId PageID) {
-	p.id = pageId
+	p.Id = pageId
 }
 
 func (p *Page) GetId() PageID {
-	return p.id
+	return p.Id
 }
 
 func (p *Page) GetPinCount() int {
-	return p.pinCounter
+	return p.PinCounter
 }
 
 func (p *Page) IncPinCount() {
-	p.pinCounter++
+	p.PinCounter++
 }
 
 func (p *Page) DecPinCount() {
-	if p.pinCounter > 0 {
-		p.pinCounter--
+	if p.PinCounter > 0 {
+		p.PinCounter--
 	}
 }
