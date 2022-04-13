@@ -48,7 +48,6 @@ type KeyValueStore interface {
 type bpTreeImpl struct {
 	MaxMem     int
 	Path       string
-	root       *Node
 	rootPageId int
 }
 type Node struct {
@@ -57,7 +56,7 @@ type Node struct {
 	ParentPageId int
 	NextPageId   int
 	numKeys      int
-	Keys         [MAX_BRANCHING_FACTOR]uint64
+	Keys         [MAX_BRANCHING_FACTOR + 1]uint64
 	Values       [MAX_BRANCHING_FACTOR + 1][10]byte
 	Children     [MAX_BRANCHING_FACTOR + 1]int
 	page         *Page
@@ -89,7 +88,7 @@ func (k *bpTreeImpl) Create(path string, size int) (*bpTreeImpl, error) {
 
 	var root Node
 	root.page = rootPage
-	bpTree.root = &root
+	root.IsLeaf = true
 	bpTree.rootPageId = int(rootPage.GetId())
 
 	bufferPoolManager.FlushPage(rootPage.GetId())
@@ -117,6 +116,10 @@ func (node *Node) writeNodeToPage() {
 
 func initializeNodeFromData(data []byte) *Node {
 	var node Node
+	if len(data) == 0 {
+		return &node
+	}
+
 	curIndex := 0
 	node.IsLeaf = *(*bool)(unsafe.Pointer(&data[0]))
 	curIndex += 1
@@ -195,7 +198,7 @@ func (node *Node) serializeNode() []byte {
 			}
 		}
 	} else {
-		for i := 0; i < node.numKeys; i++ {
+		for i := 0; i < MAX_BRANCHING_FACTOR+1; i++ {
 			data[currentIndex] = *(*byte)(unsafe.Pointer(&node.Children[i]))
 			var len = (int)(unsafe.Sizeof(node.Children[i]))
 			currentIndex += len
@@ -220,13 +223,10 @@ func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
 	for !iteratorNode.IsLeaf {
 		for i := 0; i < iteratorNode.numKeys; i++ {
 			if key < iteratorNode.Keys[i] {
-				// bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
 				iteratorNode = getNodeFromPageId(iteratorNode.Children[i])
-
 				break
 			}
 			if i == iteratorNode.numKeys-1 {
-				// bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
 				iteratorNode = getNodeFromPageId(iteratorNode.Children[i])
 			}
 		}
@@ -243,37 +243,35 @@ func (bpTree bpTreeImpl) Get(key uint64) ([10]byte, error) {
 
 func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 	// Root node should always be pinned
+	rootNode := getNodeFromPageId(bpTree.rootPageId)
 
 	// Empty bpTree insert at root
-	if bpTree.root.numKeys == 0 {
-		rootNode := bpTree.root
+	if rootNode.numKeys == 0 {
 		rootNode.PageId = bpTree.rootPageId
 		rootNode.Keys[0] = key
 		rootNode.Values[0] = value
 		rootNode.IsLeaf = true
 		rootNode.numKeys = 1
 
-		bpTree.root.writeNodeToPage()
+		rootNode.writeNodeToPage()
 
 		return nil
 	}
 
-	var iteratorNode *Node = bpTree.root
-	var parent *Node
+	var iteratorNode *Node = getNodeFromPageId(bpTree.rootPageId)
+	parent := iteratorNode
 
 	for iteratorNode.IsLeaf == false {
 		parent = iteratorNode
 		for i := 0; i < parent.numKeys; i++ {
 			// Travers pointer to the left of tree (key < fence pointer)
 			if key < iteratorNode.Keys[i] {
-				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
 				iteratorNode = getNodeFromPageId(iteratorNode.Children[i])
 				break
 			}
 
 			// Travers pointer to the right of tree (key > fence pointer)
 			if i == iteratorNode.numKeys-1 {
-				bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), false)
 				iteratorNode = getNodeFromPageId(iteratorNode.Children[i+1])
 				break
 			}
@@ -300,26 +298,23 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 
 		// Insert at found position
 		iteratorNode.Keys[i] = key
+		iteratorNode.Values[i] = value
+
 		iteratorNode.numKeys++
 
 		// Shift pointers
 		iteratorNode.Children[iteratorNode.numKeys] = iteratorNode.Children[iteratorNode.numKeys-1]
-		iteratorNode.Children[iteratorNode.numKeys-1] = -1 //Inode{} // or nil
+		iteratorNode.Children[iteratorNode.numKeys-1] = 0
 
 		iteratorNode.writeNodeToPage()
-		bufferPoolManager.UnpinPage(iteratorNode.page.GetId(), true)
-	}
-	return nil
-}
-
-/*
-	 else // Current node has no space
+	} else // Current node has no space
 	{
-		var newLeaf Node
+		var newLeaf = createNewNode()
+
 		var copyKeys [MAX_BRANCHING_FACTOR + 2]uint64
 
 		// Copy keys from current node
-		copy(copyKeys[:MAX_BRANCHING_FACTOR], iterator.keys[:MAX_BRANCHING_FACTOR])
+		copy(copyKeys[:MAX_BRANCHING_FACTOR], iteratorNode.Keys[:MAX_BRANCHING_FACTOR])
 
 		// Find insertion point
 		i := 0
@@ -327,7 +322,7 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 			i++
 		}
 
-		if key == iterator.keys[i] {
+		if key == iteratorNode.Keys[i] {
 			return ErrSameKeyTwice
 		}
 
@@ -337,78 +332,92 @@ func (bpTree *bpTreeImpl) Put(key uint64, value [10]byte) error {
 
 		copyKeys[i] = key
 		L := (MAX_BRANCHING_FACTOR + 1) / 2
-		iterator.num_keys = L
+		iteratorNode.numKeys = L
 
 		// Create new leaf
-		newLeaf.ISLEAF = true
-		newLeaf.values[0] = value
-		newLeaf.num_keys = MAX_BRANCHING_FACTOR + 1 - L
+		newLeaf.IsLeaf = true
+		newLeaf.Values[0] = value
+		newLeaf.numKeys = MAX_BRANCHING_FACTOR + 1 - L
+
 		// Point current node to new leaf
-		iterator.pointers[iterator.num_keys] = &newLeaf
+		iteratorNode.Children[iteratorNode.numKeys] = newLeaf.PageId
 
-		newLeaf.pointers[newLeaf.num_keys] = iterator.pointers[MAX_BRANCHING_FACTOR]
-		iterator.pointers[MAX_BRANCHING_FACTOR] = nil
+		newLeaf.Children[newLeaf.numKeys] = iteratorNode.Children[MAX_BRANCHING_FACTOR]
+		iteratorNode.Children[MAX_BRANCHING_FACTOR] = 0
 
-		copy(iterator.keys[:iterator.num_keys], copyKeys[:iterator.num_keys])
+		copy(iteratorNode.Keys[:iteratorNode.numKeys], copyKeys[:iteratorNode.numKeys])
 
-		k := iterator.num_keys
-		for i := 0; i < newLeaf.num_keys; i++ {
-			newLeaf.keys[i] = copyKeys[k]
+		k := iteratorNode.numKeys
+		for i := 0; i < newLeaf.numKeys; i++ {
+			newLeaf.Keys[i] = copyKeys[k]
 			k++
 		}
 
-		if iterator == bpTree.root {
-			var newRoot Node
+		newLeaf.writeNodeToPage()
+		iteratorNode.writeNodeToPage()
 
-			newRoot.keys[0] = newLeaf.keys[0]
-			newRoot.pointers[0] = iterator
-			newRoot.pointers[1] = &newLeaf
-			newRoot.ISLEAF = false
-			newRoot.num_keys = 1
-			bpTree.root = &newRoot
+		if iteratorNode.PageId == bpTree.rootPageId {
+			var newRoot = createNewNode()
+
+			newRoot.Keys[0] = newLeaf.Keys[0]
+			newRoot.Children[0] = iteratorNode.PageId
+			newRoot.Children[1] = newLeaf.PageId
+			newRoot.IsLeaf = false
+			newRoot.numKeys = 1
+			bpTree.rootPageId = newRoot.PageId
+
+			newRoot.writeNodeToPage()
 		} else {
-			internalInsertion(newLeaf.keys[0], parent, &newLeaf, bpTree.root)
+			internalInsertion(newLeaf.Keys[0], parent.PageId, newLeaf.PageId, bpTree)
 		}
 	}
 	return nil
 }
-*/
 
-/*
-func internalInsertion(key uint64, iterator *Node, child *Node, root *Node) error {
+func createNewNode() *Node {
+	var newNode Node
+	newNode.page = bufferPoolManager.NewPage()
+	newNode.PageId = int(newNode.page.GetId())
+
+	return &newNode
+}
+
+func internalInsertion(key uint64, iteratorPageId int, childPageId int, bpTree *bpTreeImpl) error {
+
+	iterator := getNodeFromPageId(iteratorPageId)
 
 	// Enough space to add a new key
-	if iterator.num_keys < MAX_BRANCHING_FACTOR {
+	if iterator.numKeys < MAX_BRANCHING_FACTOR {
 		i := 0
-		for key > iterator.keys[i] && i < iterator.num_keys {
+		for key > iterator.Keys[i] && i < iterator.numKeys {
 			i++
 		}
 
 		// Make space for new key and pointer
-		for j := iterator.num_keys; j > i; j-- {
-			iterator.keys[j] = iterator.keys[j-1]
+		for j := iterator.numKeys; j > i; j-- {
+			iterator.Keys[j] = iterator.Keys[j-1]
 		}
-		for j := iterator.num_keys + 1; j > i; j-- {
-			iterator.pointers[j] = iterator.pointers[j-1]
+		for j := iterator.numKeys + 1; j > i; j-- {
+			iterator.Children[j] = iterator.Children[j-1]
 		}
 
-		iterator.keys[i] = key
-		iterator.num_keys++
-		iterator.pointers[i+1] = child
+		iterator.Keys[i] = key
+		iterator.numKeys++
+		iterator.Children[i+1] = childPageId
+		iterator.writeNodeToPage()
 
 	} else { // Node is full, need to split
-		var newNode Node
+		var newNode = createNewNode()
 
 		var copyKeys [MAX_BRANCHING_FACTOR + 1]uint64
-		var copyPointers [MAX_BRANCHING_FACTOR + 2]*Node
+		var copyChildren [MAX_BRANCHING_FACTOR + 2]int
 
-		// TODO Refactor
 		for i := 0; i < MAX_BRANCHING_FACTOR; i++ {
-			copyKeys[i] = iterator.keys[i]
+			copyKeys[i] = iterator.Keys[i]
 		}
 
 		for i := 0; i < MAX_BRANCHING_FACTOR+1; i++ {
-			copyPointers[i] = iterator.pointers[i]
+			copyChildren[i] = iterator.Children[i]
 		}
 
 		i := 0
@@ -416,64 +425,71 @@ func internalInsertion(key uint64, iterator *Node, child *Node, root *Node) erro
 			i++
 		}
 
-		for j := MAX_BRANCHING_FACTOR + 1; j > i; j-- {
+		for j := MAX_BRANCHING_FACTOR; j > i; j-- {
 			copyKeys[j] = copyKeys[j-1]
 		}
 		copyKeys[i] = key
-		for j := MAX_BRANCHING_FACTOR + 2; j > i; j-- {
-			copyPointers[j] = copyPointers[j-1]
+
+		for j := MAX_BRANCHING_FACTOR + 1; j > i; j-- {
+			copyChildren[j] = copyChildren[j-1]
 		}
 
-		copyPointers[i+1] = child
-		newNode.ISLEAF = false
+		copyChildren[i+1] = childPageId
+		newNode.IsLeaf = false
 		var L = (MAX_BRANCHING_FACTOR + 1) / 2
-		iterator.num_keys = L
+		iterator.numKeys = L
 
-		newNode.num_keys = MAX_BRANCHING_FACTOR - L
+		newNode.numKeys = MAX_BRANCHING_FACTOR - L
 
-		var k = iterator.num_keys + 1
-		for i := 0; i < newNode.num_keys; i++ {
-			newNode.keys[i] = copyKeys[k]
+		var k = iterator.numKeys + 1
+		for i := 0; i < newNode.numKeys; i++ {
+			newNode.Keys[i] = copyKeys[k]
 			k++
 		}
 
-		k = iterator.num_keys + 1
-		for i := 0; i < newNode.num_keys+1; i++ {
-			newNode.pointers[i] = copyPointers[k]
+		k = iterator.numKeys + 1
+		for i := 0; i < newNode.numKeys+1; i++ {
+			newNode.Children[i] = copyChildren[k]
 			k++
 		}
 
-		if iterator == root {
-			var newRoot Node
-			newRoot.keys[0] = iterator.keys[iterator.num_keys]
-			newRoot.pointers[0] = iterator
-			newRoot.pointers[1] = &newNode
-			newRoot.ISLEAF = false
-			newRoot.num_keys = 1
-			root = &newRoot
+		newNode.writeNodeToPage()
+		iterator.writeNodeToPage()
+
+		if iterator.PageId == bpTree.rootPageId {
+			var newRoot = createNewNode()
+
+			newRoot.Keys[0] = iterator.Keys[iterator.numKeys]
+			newRoot.Children[0] = iterator.PageId
+			newRoot.Children[1] = newNode.PageId
+			newRoot.IsLeaf = false
+			newRoot.numKeys = 1
+			bpTree.rootPageId = newRoot.PageId
+
+			newRoot.writeNodeToPage()
 		} else {
-			internalInsertion(iterator.keys[iterator.num_keys], findParent(root, iterator), &newNode, root)
+			internalInsertion(iterator.Keys[iterator.numKeys], findParent(bpTree.rootPageId, iterator.PageId).PageId, newNode.PageId, bpTree)
 		}
 	}
 
 	return nil
 }
-*/
 
-/*
-func findParent(iterator *Node, child *Node) *Node {
+func findParent(iteratorPageId int, childPageId int) *Node {
 	var parent *Node
+	iterator := getNodeFromPageId(iteratorPageId)
+	child := getNodeFromPageId(childPageId)
 
-	if iterator.ISLEAF || iterator.pointers[0].ISLEAF {
+	if iterator.IsLeaf || getNodeFromPageId(iterator.Children[0]).IsLeaf {
 		return nil
 	}
 
-	for i := 0; i < iterator.num_keys+1; i++ {
-		if iterator.pointers[i] == child {
-			parent = iterator
+	for i := 0; i < iterator.numKeys+1; i++ {
+		if iterator.Children[i] == child.PageId {
+			parent = getNodeFromPageId(iterator.PageId)
 			return parent
 		} else {
-			parent = findParent(iterator.pointers[i], child)
+			parent = findParent(iterator.Children[i], childPageId)
 			if parent != nil {
 				return parent
 			}
@@ -481,7 +497,6 @@ func findParent(iterator *Node, child *Node) *Node {
 	}
 	return parent
 }
-*/
 
 // ScanRange Returns all values with keys ranging [begin, end) (i.e. range with begin, but without end)
 func (k *bpTreeImpl) ScanRange(begin uint64, end uint64) [][10]byte {

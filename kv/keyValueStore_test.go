@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 var (
@@ -28,17 +27,20 @@ func closeTestDb(t *testing.T, bpTreeImpl *bpTreeImpl) {
 }
 
 func printBPTree(bpTree *bpTreeImpl, t *testing.T) {
-	if bpTree.root == nil {
+	rootNode := getNodeFromPageId(bpTree.rootPageId)
+	if rootNode == nil {
 		fmt.Println("Empty tree.")
 		return
 	}
 
-	printNode(bpTree.root, t)
+	printNode(rootNode, t)
 }
 
 func printNode(cursor *Node, t *testing.T) {
 
 	if cursor != nil {
+		fmt.Print("PageId:[", cursor.PageId)
+		fmt.Print("] --- ")
 		// Print keys
 		fmt.Print("[")
 		for i := 0; i < cursor.numKeys; i++ {
@@ -49,7 +51,7 @@ func printNode(cursor *Node, t *testing.T) {
 		// Print Values for Leaf Nodes
 		if !cursor.IsLeaf {
 			for i := 0; i < cursor.numKeys+1; i++ {
-				// printNode(cursor.pointers[i], t)
+				printNode(getNodeFromPageId(cursor.Children[i]), t)
 			}
 		}
 	}
@@ -164,19 +166,29 @@ func TestPut_Benchmark(t *testing.T) {
 	assert.Equal(t, nil, err, "Insert failed")
 	assert.Nil(t, bpTreeImpl.Close())
 }
+func TestPut_InsertMultiple(t *testing.T) {
+	bpTreeImpl, _ := setupTestDB(".", mem)
+	// defer closeTestDb(t, bpTreeImpl)
+	for i := 1; i < 8; i++ {
+		bpTreeImpl.Put((uint64)(i), [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
+	}
 
+	printBPTree(bpTreeImpl, t)
+	assert.Nil(t, bpTreeImpl.Close())
+}
 func TestPut_Insert_SplitNode(t *testing.T) {
 	bpTreeImpl, _ := setupTestDB(".", mem)
 	// defer closeTestDb(t, bpTreeImpl)
+	for i := 1; i < 12; i++ {
+		bpTreeImpl.Put((uint64)(i), [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
+		printBPTree(bpTreeImpl, t)
+	}
 
-	bpTreeImpl.Put(123, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
-	bpTreeImpl.Put(22, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
-	bpTreeImpl.Put(1, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
-	err := bpTreeImpl.Put(59, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
+	err := bpTreeImpl.Put(12, [10]byte{0, 0, 0, 0, 0, 1, 1, 1, 1, 1})
 
 	assert.Equal(t, nil, err, "Insert failed")
-	assert.Nil(t, bpTreeImpl.Close())
 	printBPTree(bpTreeImpl, t)
+	assert.Nil(t, bpTreeImpl.Close())
 }
 
 func TestPut_SameKeyTwice_Fails(t *testing.T) {
@@ -263,16 +275,13 @@ func Test_NodeToPage_PageToNode(t *testing.T) {
 }
 
 func Test_NodeToPageMultipleInodes_PageToNode(t *testing.T) {
-	bpTreeImpl, _ := setupTestDB(".", mem)
 	var root Node
-
-	bpTreeImpl.root = &root
-	bpTreeImpl.root.IsLeaf = false
-	bpTreeImpl.root.numKeys = 3
-	bpTreeImpl.root.Children[0] = 1
-	bpTreeImpl.root.Children[1] = 2
-	bpTreeImpl.root.Children[2] = 3
-	data := bpTreeImpl.root.serializeNode()
+	root.IsLeaf = false
+	root.numKeys = 3
+	root.Children[0] = 1
+	root.Children[1] = 2
+	root.Children[2] = 3
+	data := root.serializeNode()
 
 	fmt.Println(data)
 	fmt.Println(len(data))
@@ -287,21 +296,19 @@ func Test_NodeToPageMultipleInodes_PageToNode(t *testing.T) {
 }
 
 func Test_NodeToPageMultipleKeyValue_PageToNode(t *testing.T) {
-	bpTreeImpl, _ := setupTestDB(".", mem)
 	var root Node
 
-	bpTreeImpl.root = &root
-	bpTreeImpl.root.IsLeaf = true
-	bpTreeImpl.root.numKeys = 1
+	root.IsLeaf = true
+	root.numKeys = 1
 	val1 := [10]byte{0, 0, 0, 0, 1, 1, 1, 1, 1, 1}
 	val2 := [10]byte{1, 0, 0, 0, 1, 1, 1, 1, 1, 1}
 
-	bpTreeImpl.root.numKeys = 2
-	bpTreeImpl.root.Keys[0] = 9
-	bpTreeImpl.root.Values[0] = val1
-	bpTreeImpl.root.Keys[1] = 2
-	bpTreeImpl.root.Values[1] = val2
-	data := bpTreeImpl.root.serializeNode()
+	root.numKeys = 2
+	root.Keys[0] = 9
+	root.Values[0] = val1
+	root.Keys[1] = 2
+	root.Values[1] = val2
+	data := root.serializeNode()
 
 	fmt.Println(data)
 	fmt.Println(len(data))
@@ -314,24 +321,6 @@ func Test_NodeToPageMultipleKeyValue_PageToNode(t *testing.T) {
 	assert.Equal(t, root.Keys[1], rootFromData.Keys[1])
 	assert.Equal(t, root.Values[1], rootFromData.Values[1])
 	assert.Equal(t, root.IsLeaf, rootFromData.IsLeaf)
-}
-func ExampleMarshal() {
-	type Item struct {
-		Foo string
-	}
-
-	b, err := msgpack.Marshal(&Item{Foo: "bar"})
-	if err != nil {
-		panic(err)
-	}
-
-	var item Item
-	err = msgpack.Unmarshal(b, &item)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(item.Foo)
-	// Output: bar
 }
 
 func TestPageSize(t *testing.T) {
