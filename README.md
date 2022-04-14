@@ -1,4 +1,4 @@
-# dmds_lab01
+# B+Tree implementation with a Buffer Pool and Diskmanager dmds_lab01
 
 Lab #1 of Renato Rao and Dominik Briner for the course Data Management & Data Structures of the University of Bern.
 
